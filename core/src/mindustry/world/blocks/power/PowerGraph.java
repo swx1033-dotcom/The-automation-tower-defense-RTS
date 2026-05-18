@@ -4,6 +4,7 @@ import arc.math.*;
 import arc.struct.*;
 import arc.util.*;
 import mindustry.gen.*;
+import mindustry.type.Category;
 
 public class PowerGraph{
     private static final Queue<Building> queue = new Queue<>();
@@ -243,6 +244,18 @@ public class PowerGraph{
         autoDisabled.clear();
     }
 
+    private int getPriority(Building consumer){
+        if(consumer == null || consumer.block == null || consumer.block.category == null) return 0;
+        switch(consumer.block.category){
+            case turret: return 5;
+            case defense: return 4;
+            case liquid: return 3;
+            case distribution: return 2;
+            case logic: return 1;
+            default: return 0;
+        }
+    }
+
     private void restoreConsumers(float powerProduced){
         if(autoDisabled.isEmpty()) return;
 
@@ -250,6 +263,7 @@ public class PowerGraph{
             float powerNeeded = getPowerNeeded();
             Building best = null;
             float bestDemand = Float.MAX_VALUE;
+            int bestPriority = -1;
             boolean restored = false;
             var items = consumers.items;
 
@@ -272,9 +286,13 @@ public class PowerGraph{
                     break;
                 }
 
-                if(powerNeeded + demand <= powerProduced + loadEpsilon && demand < bestDemand){
-                    best = consumer;
-                    bestDemand = demand;
+                int priority = getPriority(consumer);
+                if(powerNeeded + demand <= powerProduced + loadEpsilon){
+                    if(priority > bestPriority || (priority == bestPriority && demand < bestDemand)){
+                        best = consumer;
+                        bestDemand = demand;
+                        bestPriority = priority;
+                    }
                 }
             }
 
@@ -294,6 +312,7 @@ public class PowerGraph{
         while(deficit > loadEpsilon){
             Building best = null;
             float bestDemand = 0f;
+            int bestPriority = Integer.MAX_VALUE;
             var items = consumers.items;
 
             for(int i = 0; i < consumers.size; i++){
@@ -301,9 +320,13 @@ public class PowerGraph{
                 if(autoDisabled.contains(consumer.pos())) continue;
 
                 float demand = getManagedConsumerDemand(consumer);
-                if(demand > bestDemand + loadEpsilon){
-                    best = consumer;
-                    bestDemand = demand;
+                if(demand > loadEpsilon){
+                    int priority = getPriority(consumer);
+                    if(priority < bestPriority || (priority == bestPriority && demand > bestDemand + loadEpsilon)){
+                        best = consumer;
+                        bestDemand = demand;
+                        bestPriority = priority;
+                    }
                 }
             }
 
