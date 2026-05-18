@@ -1,0 +1,152 @@
+diff --git a/core/src/mindustry/world/blocks/power/PowerGraph.java b/core/src/mindustry/world/blocks/power/PowerGraph.java
+index dd86bec9c9..49155a9c3d 100644
+--- a/core/src/mindustry/world/blocks/power/PowerGraph.java
++++ b/core/src/mindustry/world/blocks/power/PowerGraph.java
+@@ -4,6 +4,7 @@ import arc.math.*;
+ import arc.struct.*;
+ import arc.util.*;
+ import mindustry.gen.*;
++import mindustry.world.meta.BlockGroup;
+ 
+ public class PowerGraph{
+     private static final Queue<Building> queue = new Queue<>();
+@@ -24,6 +25,12 @@ public class PowerGraph{
+     //diodes workaround for correct energy production info
+     private float energyDelta = 0f;
+ 
++    private static final float shedThreshold = 0.5f;
++    private static final float recoverThreshold = 0.85f;
++    private static final int maxShedPerTick = 4;
++    private static final int maxRecoverPerTick = 2;
++    private final IntSet sheddedConsumers = new IntSet();
++
+     private final int graphID;
+     private static int lastGraphID;
+ 
+@@ -108,7 +115,7 @@ public class PowerGraph{
+         for(int i = 0; i < consumers.size; i++){
+             var consumer = items[i];
+             var consumePower = consumer.block.consPower;
+-            if(consumer.shouldConsumePower){
++            if(consumer.shouldConsumePower && !sheddedConsumers.contains(consumer.pos())){
+                 powerNeeded += consumePower.requestedPower(consumer) * consumer.delta();
+             }
+         }
+@@ -192,6 +199,10 @@ public class PowerGraph{
+             var consumer = items[i];
+             //TODO how would it even be null
+             var cons = consumer.block.consPower;
++            if(sheddedConsumers.contains(consumer.pos())){
++                consumer.power.status = 0f;
++                continue;
++            }
+             if(cons.buffered){
+                 if(!Mathf.zero(cons.capacity)){
+                     // Add an equal percentage of power to all buffers, based on the global power coverage in this graph
+@@ -213,6 +224,69 @@ public class PowerGraph{
+         }
+     }
+ 
++    private int getConsumerPriority(Building consumer){
++        BlockGroup group = consumer.block.group;
++        if(group == BlockGroup.turrets || group == BlockGroup.projectors || group == BlockGroup.walls) return 0;
++        if(group == BlockGroup.power || group == BlockGroup.logic) return 1;
++        if(group == BlockGroup.drills || group == BlockGroup.liquids || group == BlockGroup.units || group == BlockGroup.heat) return 2;
++        return 3;
++    }
++
++    private boolean canShed(Building consumer){
++        if(sheddedConsumers.contains(consumer.pos())) return false;
++        if(consumer.block.outputsPower) return false;
++        return true;
++    }
++
++    private void manageLoad(){
++        if(consumers.isEmpty() || Mathf.zero(lastPowerNeeded)) return;
++
++        float satisfaction = getSatisfaction();
++
++        if(satisfaction < shedThreshold){
++            shedConsumers();
++        }else if(satisfaction > recoverThreshold && !sheddedConsumers.isEmpty()){
++            recoverConsumers();
++        }
++    }
++
++    private void shedConsumers(){
++        for(int priority = 3; priority >= 0; priority--){
++            int shedded = 0;
++            for(int i = 0; i < consumers.size && shedded < maxShedPerTick; i++){
++                var consumer = consumers.items[i];
++                if(canShed(consumer) && getConsumerPriority(consumer) == priority){
++                    sheddedConsumers.add(consumer.pos());
++                    consumer.power.status = 0f;
++                    shedded++;
++                }
++            }
++            if(shedded > 0) break;
++        }
++    }
++
++    private void recoverConsumers(){
++        for(int priority = 0; priority <= 3; priority++){
++            int recovered = 0;
++            for(int i = 0; i < consumers.size && recovered < maxRecoverPerTick; i++){
++                var consumer = consumers.items[i];
++                if(sheddedConsumers.contains(consumer.pos()) && getConsumerPriority(consumer) == priority){
++                    sheddedConsumers.remove(consumer.pos());
++                    recovered++;
++                }
++            }
++            if(recovered > 0) break;
++        }
++    }
++
++    public boolean isShedded(Building build){
++        return sheddedConsumers.contains(build.pos());
++    }
++
++    public int getSheddedCount(){
++        return sheddedConsumers.size;
++    }
++
+     public void update(){
+         if(!consumers.isEmpty() && consumers.first().cheating()){
+             //when cheating, just set status to 1
+@@ -221,9 +295,12 @@ public class PowerGraph{
+             }
+ 
+             lastPowerNeeded = lastPowerProduced = 1f;
++            sheddedConsumers.clear();
+             return;
+         }
+ 
++        manageLoad();
++
+         float powerNeeded = getPowerNeeded();
+         float powerProduced = getPowerProduced();
+ 
+@@ -285,6 +362,7 @@ public class PowerGraph{
+ 
+             build.power.graph = this;
+             build.power.init = true;
++            sheddedConsumers.remove(build.pos());
+             all.add(build);
+ 
+             if(build.block.outputsPower && build.block.consumesPower && !build.block.consPower.buffered){
+@@ -309,6 +387,7 @@ public class PowerGraph{
+         producers.clear();
+         consumers.clear();
+         batteries.clear();
++        sheddedConsumers.clear();
+         //nothing left
+         if(entity != null) entity.remove();
+     }
+@@ -335,6 +414,7 @@ public class PowerGraph{
+         producers.remove(build);
+         consumers.remove(build);
+         batteries.remove(build);
++        sheddedConsumers.remove(build.pos());
+     }
+ 
+     /** Note that this does not actually remove the building from the graph;
