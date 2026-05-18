@@ -4,18 +4,35 @@ import arc.math.*;
 import arc.struct.*;
 import arc.util.*;
 import mindustry.gen.*;
+import mindustry.world.meta.*;
 
 public class PowerGraph{
     private static final Queue<Building> queue = new Queue<>();
     private static final Seq<Building> outArray1 = new Seq<>();
     private static final Seq<Building> outArray2 = new Seq<>();
     private static final IntSet closedSet = new IntSet();
+    private static final Seq<Building> smartLoadSeq1 = new Seq<>(false, 16, Building.class);
 
     //do not modify any of these unless you know what you're doing!
     public final Seq<Building> producers = new Seq<>(false, 16, Building.class);
     public final Seq<Building> consumers = new Seq<>(false, 16, Building.class);
     public final Seq<Building> batteries = new Seq<>(false, 16, Building.class);
     public final Seq<Building> all = new Seq<>(false, 16, Building.class);
+
+    // --- Smart Load Distribution ---
+    /** If true, the smart load system will auto-disable non-critical buildings during power deficit. */
+    public boolean smartLoadEnabled = true;
+    /** Buildings that have been automatically disabled due to power shortage. */
+    public final Seq<Building> autoDisabledConsumers = new Seq<>(false, 8, Building.class);
+    /** Consecutive ticks of power deficit (production + battery < demand). Used for hysteresis. */
+    private int deficitTicks = 0;
+    /** Consecutive ticks of power surplus. Used for hysteresis before re-enabling buildings. */
+    private int surplusTicks = 0;
+    /** Number of ticks of sustained deficit before auto-disabling begins. */
+    public int deficitThreshold = 30;
+    /** Number of ticks of sustained surplus before auto-disabled buildings are re-enabled. */
+    public int surplusThreshold = 60;
+    // --- End Smart Load ---
 
     private final @Nullable PowerGraphUpdater entity;
     private final WindowedMean powerBalance = new WindowedMean(60);
@@ -74,6 +91,23 @@ public class PowerGraph{
         return lastPowerStored;
     }
 
+    public static int getPowerPriority(Building build){
+        var flags = build.block.flags;
+        if(flags.contains(BlockFlag.core) || flags.contains(BlockFlag.turret) ||
+            flags.contains(BlockFlag.repair) || flags.contains(BlockFlag.shield)){
+            return 2;
+        }
+        if(flags.contains(BlockFlag.factory) || flags.contains(BlockFlag.drill) ||
+            flags.contains(BlockFlag.reactor) || flags.contains(BlockFlag.extinguisher)){
+            return 1;
+        }
+        return 0;
+    }
+
+    public boolean isAutoDisabled(Building build){
+        return autoDisabledConsumers.contains(build);
+    }
+
     public void transferPower(float amount){
         if(amount > 0){
             chargeBatteries(amount);
@@ -108,7 +142,7 @@ public class PowerGraph{
         for(int i = 0; i < consumers.size; i++){
             var consumer = items[i];
             var consumePower = consumer.block.consPower;
-            if(consumer.shouldConsumePower){
+            if(consumer.shouldConsumePower && !autoDisabledConsumers.contains(consumer)){
                 powerNeeded += consumePower.requestedPower(consumer) * consumer.delta();
             }
         }
@@ -190,6 +224,11 @@ public class PowerGraph{
         var items = consumers.items;
         for(int i = 0; i < consumers.size; i++){
             var consumer = items[i];
+            //auto-disabled consumers get zero power
+            if(autoDisabledConsumers.contains(consumer)){
+                consumer.power.status = 0f;
+                continue;
+            }
             //TODO how would it even be null
             var cons = consumer.block.consPower;
             if(cons.buffered){
@@ -213,6 +252,70 @@ public class PowerGraph{
         }
     }
 
+    public void smartLoadUpdate(float initialPowerNeeded, float initialPowerProduced, float batteryStored){
+        if(!smartLoadEnabled || consumers.isEmpty()) return;
+
+        boolean hasDeficit = (initialPowerProduced + batteryStored) < initialPowerNeeded;
+        boolean hasSurplus = (initialPowerProduced + batteryStored) > initialPowerNeeded;
+
+        if(hasDeficit){
+            deficitTicks++;
+            surplusTicks = 0;
+
+            if(deficitTicks >= deficitThreshold && !consumers.isEmpty()){
+                smartLoadSeq1.clear();
+                for(Building consumer : consumers){
+                    if(consumer.enabled && consumer.shouldConsumePower && consumer.block.consPower != null &&
+                       !autoDisabledConsumers.contains(consumer) && getPowerPriority(consumer) == 0){
+                        smartLoadSeq1.add(consumer);
+                    }
+                }
+
+                smartLoadSeq1.sort((a, b) -> Float.compare(
+                    a.block.consPower != null ? a.block.consPower.usage : 0f,
+                    b.block.consPower != null ? b.block.consPower.usage : 0f
+                ));
+
+                for(int i = smartLoadSeq1.size - 1; i >= 0; i--){
+                    Building consumer = smartLoadSeq1.items[i];
+
+                    if(initialPowerNeeded <= initialPowerProduced + batteryStored) break;
+
+                    if(!autoDisabledConsumers.contains(consumer)){
+                        autoDisabledConsumers.add(consumer);
+                        float usage = consumer.block.consPower.requestedPower(consumer) * consumer.delta();
+                        initialPowerNeeded -= usage;
+                    }
+                }
+
+                deficitTicks = 0;
+            }
+        }else if(hasSurplus){
+            surplusTicks++;
+            deficitTicks = 0;
+
+            if(surplusTicks >= surplusThreshold && !autoDisabledConsumers.isEmpty()){
+                int toReenable = 0;
+                float available = initialPowerProduced + batteryStored - initialPowerNeeded;
+                while(toReenable < autoDisabledConsumers.size && available > 0){
+                    Building candidate = autoDisabledConsumers.get(toReenable);
+                    float needed = candidate.block.consPower != null ? candidate.block.consPower.requestedPower(candidate) * candidate.delta() : 0f;
+
+                    if(needed <= available || toReenable == autoDisabledConsumers.size() - 1){
+                        autoDisabledConsumers.removeIndex(toReenable);
+                        available -= needed;
+                    }else{
+                        toReenable++;
+                    }
+                }
+                surplusTicks = 0;
+            }
+        }else{
+            deficitTicks = 0;
+            surplusTicks = 0;
+        }
+    }
+
     public void update(){
         if(!consumers.isEmpty() && consumers.first().cheating()){
             //when cheating, just set status to 1
@@ -224,8 +327,14 @@ public class PowerGraph{
             return;
         }
 
+        float initialPowerNeeded = getTotalPowerNeeded();
+        float initialPowerProduced = getPowerProduced();
+        float batteryStored = getBatteryStored();
+
+        smartLoadUpdate(initialPowerNeeded, initialPowerProduced, batteryStored);
+
         float powerNeeded = getPowerNeeded();
-        float powerProduced = getPowerProduced();
+        float powerProduced = initialPowerProduced;
 
         lastPowerNeeded = powerNeeded;
         lastPowerProduced = powerProduced;
@@ -233,9 +342,9 @@ public class PowerGraph{
         lastScaledPowerIn = (powerProduced + energyDelta) / Time.delta;
         lastScaledPowerOut = powerNeeded / Time.delta;
         lastCapacity = getTotalBatteryCapacity();
-        lastPowerStored = getBatteryStored();
+        lastPowerStored = batteryStored;
 
-        powerBalance.add((lastPowerProduced - lastPowerNeeded + energyDelta) / Time.delta);
+        powerBalance.add((initialPowerProduced - initialPowerNeeded + energyDelta) / Time.delta);
         energyDelta = 0f;
 
         if(!(consumers.size == 0 && producers.size == 0 && batteries.size == 0)){
@@ -254,6 +363,19 @@ public class PowerGraph{
 
             distributePower(powerNeeded, powerProduced, charged);
         }
+    }
+
+    public float getTotalPowerNeeded(){
+        float powerNeeded = 0f;
+        var items = consumers.items;
+        for(int i = 0; i < consumers.size; i++){
+            var consumer = items[i];
+            var consumePower = consumer.block.consPower;
+            if(consumer.shouldConsumePower){
+                powerNeeded += consumePower.requestedPower(consumer) * consumer.delta();
+            }
+        }
+        return powerNeeded;
     }
 
     public void addGraph(PowerGraph graph){
