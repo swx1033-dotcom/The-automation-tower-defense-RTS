@@ -1,0 +1,312 @@
+diff --git a/core/src/mindustry/world/blocks/production/GenericCrafter.java b/core/src/mindustry/world/blocks/production/GenericCrafter.java
+index 0fc1ef457b..0919d1820b 100644
+--- a/core/src/mindustry/world/blocks/production/GenericCrafter.java
++++ b/core/src/mindustry/world/blocks/production/GenericCrafter.java
+@@ -15,6 +15,7 @@ import mindustry.mod.*;
+ import mindustry.type.*;
+ import mindustry.world.*;
+ import mindustry.world.blocks.liquid.Conduit.*;
++import mindustry.world.blocks.storage.CoreBlock.*;
+ import mindustry.world.draw.*;
+ import mindustry.world.meta.*;
+ 
+@@ -82,12 +83,9 @@ public class GenericCrafter extends Block{
+     public void setBars(){
+         super.setBars();
+ 
+-        //set up liquid bars for liquid outputs
+         if(outputLiquids != null && outputLiquids.length > 0){
+-            //no need for dynamic liquid bar
+             removeBar("liquid");
+ 
+-            //then display output buffer
+             for(var stack : outputLiquids){
+                 addLiquidBar(stack.liquid);
+             }
+@@ -123,7 +121,6 @@ public class GenericCrafter extends Block{
+         if(outputLiquids == null && outputLiquid != null){
+             outputLiquids = new LiquidStack[]{outputLiquid};
+         }
+-        //write back to outputLiquid, as it helps with sensing
+         if(outputLiquid == null && outputLiquids != null && outputLiquids.length > 0){
+             outputLiquid = outputLiquids[0];
+         }
+@@ -201,6 +198,8 @@ public class GenericCrafter extends Block{
+ 
+         @Override
+         public boolean shouldConsume(){
++            if(!enabled) return false;
++
+             if(outputItems != null){
+                 for(var output : outputItems){
+                     if(items.get(output.item) + output.amount > itemCapacity){
+@@ -217,18 +216,16 @@ public class GenericCrafter extends Block{
+                             return false;
+                         }
+                     }else{
+-                        //if there's still space left, it's not full for all liquids
+                         allFull = false;
+                     }
+                 }
+ 
+-                //if there is no space left for any liquid, it can't reproduce
+                 if(allFull){
+                     return false;
+                 }
+             }
+ 
+-            return enabled;
++            return true;
+         }
+ 
+         @Override
+@@ -238,7 +235,6 @@ public class GenericCrafter extends Block{
+                 progress += getProgressIncrease(craftTime);
+                 warmup = Mathf.approachDelta(warmup, warmupTarget(), warmupSpeed);
+ 
+-                //continuously output based on efficiency
+                 if(outputLiquids != null){
+                     float inc = getProgressIncrease(1f);
+                     for(var output : outputLiquids){
+@@ -253,7 +249,6 @@ public class GenericCrafter extends Block{
+                 warmup = Mathf.approachDelta(warmup, 0f, warmupSpeed);
+             }
+ 
+-            //TODO may look bad, revert to edelta() if so
+             totalProgress += warmup * Time.delta;
+ 
+             if(progress >= 1f){
+@@ -269,7 +264,6 @@ public class GenericCrafter extends Block{
+                 return super.getProgressIncrease(baseTime);
+             }
+ 
+-            //limit progress increase by maximum amount of liquid it can produce
+             float scaling = 1f, max = 1f;
+             if(outputLiquids != null){
+                 max = 0f;
+@@ -280,7 +274,6 @@ public class GenericCrafter extends Block{
+                 }
+             }
+ 
+-            //when dumping excess take the maximum value instead of the minimum.
+             return super.getProgressIncrease(baseTime) * (dumpExtraLiquid ? Math.min(max, 1f) : scaling);
+         }
+ 
+@@ -298,13 +291,79 @@ public class GenericCrafter extends Block{
+             return totalProgress;
+         }
+ 
++        public boolean canOffloadOutput(Building other, Item item){
++            if(!other.acceptItem(self(), item) || !canDump(other, item)) return false;
++            if(other instanceof CoreBuild core && core.items != null && core.items.get(item) >= core.storageCapacity) return false;
++            return true;
++        }
++
++        public void offloadOutput(Item item){
++            produced(item, 1);
++            int dump = this.cdump;
++
++            for(int i = 0; i < proximity.size; i++){
++                incrementDump(proximity.size);
++                Building other = proximity.get((i + dump) % proximity.size);
++                if(canOffloadOutput(other, item)){
++                    other.handleItem(self(), item);
++                    return;
++                }
++            }
++
++            handleItem(self(), item);
++        }
++
++        public boolean dumpOutput(Item todump){
++            if(!block.hasItems || items.total() == 0 || proximity.size == 0 || (todump != null && !items.has(todump))) return false;
++
++            int dump = this.cdump;
++            var allItems = content.items();
++            int itemSize = allItems.size;
++            Object[] itemArray = allItems.items;
++
++            if(todump == null){
++                for(int i = 0; i < proximity.size; i++){
++                    Building other = proximity.get((i + dump) % proximity.size);
++
++                    for(int ii = 0; ii < itemSize; ii++){
++                        if(!items.has(ii)) continue;
++                        Item item = (Item)itemArray[ii];
++
++                        if(canOffloadOutput(other, item)){
++                            other.handleItem(self(), item);
++                            items.remove(item, 1);
++                            incrementDump(proximity.size);
++                            return true;
++                        }
++                    }
++
++                    incrementDump(proximity.size);
++                }
++            }else{
++                for(int i = 0; i < proximity.size; i++){
++                    Building other = proximity.get((i + dump) % proximity.size);
++
++                    if(canOffloadOutput(other, todump)){
++                        other.handleItem(self(), todump);
++                        items.remove(todump, 1);
++                        incrementDump(proximity.size);
++                        return true;
++                    }
++
++                    incrementDump(proximity.size);
++                }
++            }
++
++            return false;
++        }
++
+         public void craft(){
+             consume();
+ 
+             if(outputItems != null){
+                 for(var output : outputItems){
+                     for(int i = 0; i < output.amount; i++){
+-                        offload(output.item);
++                        offloadOutput(output.item);
+                     }
+                 }
+             }
+@@ -318,7 +377,7 @@ public class GenericCrafter extends Block{
+         public void dumpOutputs(){
+             if(outputItems != null && timer(timerDump, dumpTime / timeScale)){
+                 for(ItemStack output : outputItems){
+-                    dump(output.item);
++                    dumpOutput(output.item);
+                 }
+             }
+ 
+@@ -334,7 +393,6 @@ public class GenericCrafter extends Block{
+         @Override
+         public double sense(LAccess sensor){
+             if(sensor == LAccess.progress) return progress();
+-            //attempt to prevent wild total liquid fluctuation, at least for crafters
+             if(sensor == LAccess.totalLiquids && outputLiquid != null) return liquids.get(outputLiquid.liquid);
+             return super.sense(sensor);
+         }
+diff --git a/core/src/mindustry/world/blocks/production/Separator.java b/core/src/mindustry/world/blocks/production/Separator.java
+index 22ad5c94ab..aa5d945f88 100644
+--- a/core/src/mindustry/world/blocks/production/Separator.java
++++ b/core/src/mindustry/world/blocks/production/Separator.java
+@@ -9,6 +9,7 @@ import mindustry.gen.*;
+ import mindustry.logic.*;
+ import mindustry.type.*;
+ import mindustry.world.*;
++import mindustry.world.blocks.storage.CoreBlock.*;
+ import mindustry.world.consumers.*;
+ import mindustry.world.draw.*;
+ import mindustry.world.meta.*;
+@@ -91,7 +92,6 @@ public class Separator extends Block{
+         @Override
+         public boolean shouldConsume(){
+             int total = items.total();
+-            //very inefficient way of allowing separators to ignore input buffer storage
+             if(consItems != null){
+                 for(ItemStack stack : consItems.items){
+                     total -= items.get(stack.item);
+@@ -126,6 +126,76 @@ public class Separator extends Block{
+             return totalProgress;
+         }
+ 
++        public boolean canOffloadOutput(Building other, Item item){
++            if(!other.acceptItem(self(), item) || !canDump(other, item)) return false;
++            if(other instanceof CoreBuild core && core.items != null && core.items.get(item) >= core.storageCapacity) return false;
++            return true;
++        }
++
++        public void offloadOutput(Item item){
++            produced(item, 1);
++            int dump = this.cdump;
++
++            for(int i = 0; i < proximity.size; i++){
++                incrementDump(proximity.size);
++                Building other = proximity.get((i + dump) % proximity.size);
++                if(canOffloadOutput(other, item)){
++                    other.handleItem(self(), item);
++                    return;
++                }
++            }
++
++            handleItem(self(), item);
++        }
++
++        public boolean dumpOutput(){
++            return dumpOutput(null);
++        }
++
++        public boolean dumpOutput(Item todump){
++            if(!block.hasItems || items.total() == 0 || proximity.size == 0 || (todump != null && !items.has(todump))) return false;
++
++            int dump = this.cdump;
++            var allItems = content.items();
++            int itemSize = allItems.size;
++            Object[] itemArray = allItems.items;
++
++            if(todump == null){
++                for(int i = 0; i < proximity.size; i++){
++                    Building other = proximity.get((i + dump) % proximity.size);
++
++                    for(int ii = 0; ii < itemSize; ii++){
++                        if(!items.has(ii)) continue;
++                        Item item = (Item)itemArray[ii];
++
++                        if(canOffloadOutput(other, item)){
++                            other.handleItem(self(), item);
++                            items.remove(item, 1);
++                            incrementDump(proximity.size);
++                            return true;
++                        }
++                    }
++
++                    incrementDump(proximity.size);
++                }
++            }else{
++                for(int i = 0; i < proximity.size; i++){
++                    Building other = proximity.get((i + dump) % proximity.size);
++
++                    if(canOffloadOutput(other, todump)){
++                        other.handleItem(self(), todump);
++                        items.remove(todump, 1);
++                        incrementDump(proximity.size);
++                        return true;
++                    }
++
++                    incrementDump(proximity.size);
++                }
++            }
++
++            return false;
++        }
++
+         @Override
+         public void updateTile(){
+             totalProgress += warmup * delta();
+@@ -146,7 +216,6 @@ public class Separator extends Block{
+                 int count = 0;
+                 Item item = null;
+ 
+-                //guaranteed desync since items are random - won't be fixed and probably isn't too important
+                 for(ItemStack stack : results){
+                     if(i >= count && i < count + stack.amount){
+                         item = stack.item;
+@@ -158,12 +227,12 @@ public class Separator extends Block{
+                 consume();
+ 
+                 if(item != null && items.get(item) < itemCapacity){
+-                    offload(item);
++                    offloadOutput(item);
+                 }
+             }
+ 
+             if(timer(timerDump, dumpTime / timeScale)){
+-                dump();
++                dumpOutput();
+             }
+         }
+ 

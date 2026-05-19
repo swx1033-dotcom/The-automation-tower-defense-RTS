@@ -9,6 +9,7 @@ import mindustry.gen.*;
 import mindustry.logic.*;
 import mindustry.type.*;
 import mindustry.world.*;
+import mindustry.world.blocks.storage.CoreBlock.*;
 import mindustry.world.consumers.*;
 import mindustry.world.draw.*;
 import mindustry.world.meta.*;
@@ -91,7 +92,6 @@ public class Separator extends Block{
         @Override
         public boolean shouldConsume(){
             int total = items.total();
-            //very inefficient way of allowing separators to ignore input buffer storage
             if(consItems != null){
                 for(ItemStack stack : consItems.items){
                     total -= items.get(stack.item);
@@ -126,6 +126,76 @@ public class Separator extends Block{
             return totalProgress;
         }
 
+        public boolean canOffloadOutput(Building other, Item item){
+            if(!other.acceptItem(self(), item) || !canDump(other, item)) return false;
+            if(other instanceof CoreBuild core && core.items != null && core.items.get(item) >= core.storageCapacity) return false;
+            return true;
+        }
+
+        public void offloadOutput(Item item){
+            produced(item, 1);
+            int dump = this.cdump;
+
+            for(int i = 0; i < proximity.size; i++){
+                incrementDump(proximity.size);
+                Building other = proximity.get((i + dump) % proximity.size);
+                if(canOffloadOutput(other, item)){
+                    other.handleItem(self(), item);
+                    return;
+                }
+            }
+
+            handleItem(self(), item);
+        }
+
+        public boolean dumpOutput(){
+            return dumpOutput(null);
+        }
+
+        public boolean dumpOutput(Item todump){
+            if(!block.hasItems || items.total() == 0 || proximity.size == 0 || (todump != null && !items.has(todump))) return false;
+
+            int dump = this.cdump;
+            var allItems = content.items();
+            int itemSize = allItems.size;
+            Object[] itemArray = allItems.items;
+
+            if(todump == null){
+                for(int i = 0; i < proximity.size; i++){
+                    Building other = proximity.get((i + dump) % proximity.size);
+
+                    for(int ii = 0; ii < itemSize; ii++){
+                        if(!items.has(ii)) continue;
+                        Item item = (Item)itemArray[ii];
+
+                        if(canOffloadOutput(other, item)){
+                            other.handleItem(self(), item);
+                            items.remove(item, 1);
+                            incrementDump(proximity.size);
+                            return true;
+                        }
+                    }
+
+                    incrementDump(proximity.size);
+                }
+            }else{
+                for(int i = 0; i < proximity.size; i++){
+                    Building other = proximity.get((i + dump) % proximity.size);
+
+                    if(canOffloadOutput(other, todump)){
+                        other.handleItem(self(), todump);
+                        items.remove(todump, 1);
+                        incrementDump(proximity.size);
+                        return true;
+                    }
+
+                    incrementDump(proximity.size);
+                }
+            }
+
+            return false;
+        }
+
         @Override
         public void updateTile(){
             totalProgress += warmup * delta();
@@ -146,7 +216,6 @@ public class Separator extends Block{
                 int count = 0;
                 Item item = null;
 
-                //guaranteed desync since items are random - won't be fixed and probably isn't too important
                 for(ItemStack stack : results){
                     if(i >= count && i < count + stack.amount){
                         item = stack.item;
@@ -158,12 +227,12 @@ public class Separator extends Block{
                 consume();
 
                 if(item != null && items.get(item) < itemCapacity){
-                    offload(item);
+                    offloadOutput(item);
                 }
             }
 
             if(timer(timerDump, dumpTime / timeScale)){
-                dump();
+                dumpOutput();
             }
         }
 
