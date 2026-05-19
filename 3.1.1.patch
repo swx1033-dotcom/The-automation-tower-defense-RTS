@@ -1,0 +1,219 @@
+diff --git a/core/src/mindustry/entities/bullet/BulletType.java b/core/src/mindustry/entities/bullet/BulletType.java
+index 10d99f323c..3e1c945e6b 100644
+--- a/core/src/mindustry/entities/bullet/BulletType.java
++++ b/core/src/mindustry/entities/bullet/BulletType.java
+@@ -28,6 +28,12 @@ import static mindustry.Vars.*;
+ 
+ public class BulletType extends Content implements Cloneable{
+     static final UnitDamageEvent bulletDamageEvent = new UnitDamageEvent();
++    static final IntMap<TacticalBulletState> tacticalStates = new IntMap<>();
++
++    static class TacticalBulletState{
++        @Nullable Teamc target;
++        int bounces;
++    }
+ 
+     /** Lifetime in ticks. */
+     public float lifetime = 40f;
+@@ -315,6 +321,24 @@ public class BulletType extends Content implements Cloneable{
+     public float homingRange = 50f;
+     /** Use a negative value to disable homing delay. */
+     public float homingDelay = -1f;
++    /** If positive, the bullet locks onto one target within this range until the target is lost. */
++    public float lockRange = -1f;
++    /** Override steering strength used while a target is locked. Negative values reuse homingPower. */
++    public float lockPower = -1f;
++    /** Whether range lock may acquire units. */
++    public boolean lockUnits = true;
++    /** Whether range lock may acquire buildings. */
++    public boolean lockBuildings = true;
++    /** Maximum number of ricochets after a successful hit. */
++    public int bounceCap = 0;
++    /** Search range used to find the next ricochet target. */
++    public float bounceRange = 80f;
++    /** Whether ricochet may select units. */
++    public boolean bounceUnits = true;
++    /** Whether ricochet may select buildings. */
++    public boolean bounceBuildings = true;
++    /** If true, bullets continue piercing when no ricochet target is found. */
++    public boolean bounceFallbackPierce = false;
+     /** Speed at which bullet rotates to follow cursor. <= 0 to disable. */
+     public float followAimSpeed = 0f;
+ 
+@@ -475,6 +499,11 @@ public class BulletType extends Content implements Cloneable{
+         }
+ 
+         handlePierce(b, initialHealth, x, y);
++
++        if(b.isAdded() && bounceCap > 0 && !bounce(b, x, y) && !bounceFallbackPierce){
++            b.hit = true;
++            b.remove();
++        }
+     }
+ 
+     public void hitEntity(Bullet b, Hitboxc entity, float health){
+@@ -518,6 +547,11 @@ public class BulletType extends Content implements Cloneable{
+         }
+ 
+         handlePierce(b, health, entity.x(), entity.y());
++
++        if(b.isAdded() && bounceCap > 0 && !bounce(b, entity.x(), entity.y()) && !bounceFallbackPierce){
++            b.hit = true;
++            b.remove();
++        }
+     }
+ 
+     public void handlePierce(Bullet b, float initialHealth, float x, float y){
+@@ -538,6 +572,73 @@ public class BulletType extends Content implements Cloneable{
+         return 1f;
+     }
+ 
++    protected TacticalBulletState tacticalState(Bullet b){
++        TacticalBulletState state = tacticalStates.get(b.id);
++        if(state == null){
++            state = new TacticalBulletState();
++            tacticalStates.put(b.id, state);
++        }
++        return state;
++    }
++
++    protected void clearTacticalState(Bullet b){
++        tacticalStates.remove(b.id);
++    }
++
++    protected boolean validLockUnit(Bullet b, Unit unit, float x, float y, float range, boolean allowUnits){
++        return allowUnits && unit != null && unit.isValid() && unit.checkTarget(collidesAir, collidesGround) && unit.targetable(b.team) && !b.hasCollided(unit.id) && unit.within(x, y, range + unit.hitSize / 2f);
++    }
++
++    protected boolean validLockBuilding(Bullet b, Building build, float x, float y, float range, boolean allowBuildings){
++        return allowBuildings && build != null && collidesGround && !build.dead() && build.team != b.team && !b.hasCollided(build.id) && Mathf.within(x, y, build.x, build.y, range + tilesize / 2f);
++    }
++
++    protected @Nullable Teamc findTacticalTarget(Bullet b, float x, float y, float range, boolean allowUnits, boolean allowBuildings, @Nullable Teamc preferred){
++        if(range <= 0f) return null;
++
++        if(preferred instanceof Unit unit && validLockUnit(b, unit, x, y, range, allowUnits)){
++            return unit;
++        }
++
++        if(preferred instanceof Building build && validLockBuilding(b, build, x, y, range, allowBuildings)){
++            return build;
++        }
++
++        if(allowBuildings && b.aimTile != null && b.aimTile.build != null && validLockBuilding(b, b.aimTile.build, x, y, range, true)){
++            return b.aimTile.build;
++        }
++
++        return Units.closestTarget(b.team, x, y, range,
++            unit -> validLockUnit(b, unit, x, y, range, allowUnits),
++            build -> validLockBuilding(b, build, x, y, range, allowBuildings)
++        );
++    }
++
++    protected boolean bounce(Bullet b, float x, float y){
++        if(bounceCap <= 0) return false;
++
++        TacticalBulletState state = tacticalState(b);
++        if(state.bounces >= bounceCap) return false;
++
++        Teamc target = findTacticalTarget(b, x, y, bounceRange, bounceUnits, bounceBuildings, state.target);
++        if(target == null) return false;
++
++        float angle = Angles.angle(x, y, target.x(), target.y());
++        b.set(x + Angles.trnsx(angle, 0.01f), y + Angles.trnsy(angle, 0.01f));
++        b.vel.setAngle(angle);
++        state.target = target;
++        state.bounces++;
++        return true;
++    }
++
++    protected @Nullable Teamc lockedTarget(Bullet b){
++        if(lockRange <= 0f) return null;
++
++        TacticalBulletState state = tacticalState(b);
++        state.target = findTacticalTarget(b, b.x, b.y, lockRange, lockUnits, lockBuildings, state.target);
++        return state.target;
++    }
++
+     public void hit(Bullet b){
+         hit(b, b.x, b.y, true);
+     }
+@@ -649,6 +750,8 @@ public class BulletType extends Content implements Cloneable{
+ 
+     /** Called when the bullet is removed for any reason. */
+     public void removed(Bullet b){
++        clearTacticalState(b);
++
+         if(trailLength > 0 && b.trail != null && b.trail.size() > 0){
+             Fx.trailFade.at(b.x, b.y, trailWidth, trailColor, b.trail.copy());
+         }
+@@ -732,29 +835,39 @@ public class BulletType extends Content implements Cloneable{
+     }
+ 
+     public void updateHoming(Bullet b){
+-        if(homingPower > 0.0001f && b.time >= homingDelay){
+-            float realAimX = b.aimX < 0 ? b.x : b.aimX;
+-            float realAimY = b.aimY < 0 ? b.y : b.aimY;
++        if(b.time >= homingDelay){
++            Teamc target = null;
++            float turnSpeed = homingPower;
++
++            if(lockRange > 0f){
++                target = lockedTarget(b);
++                if(target != null && lockPower >= 0f){
++                    turnSpeed = lockPower;
++                }
++            }
+ 
+-            Teamc target;
+-            //home in on allies if possible
+-            if(heals()){
+-                target = Units.closestTarget(null, realAimX, realAimY, homingRange,
+-                e -> e.checkTarget(collidesAir, collidesGround) && e.team != b.team && !b.hasCollided(e.id),
+-                t -> collidesGround && (t.team != b.team || t.damaged()) && !b.hasCollided(t.id)
+-                );
+-            }else{
+-                if(b.aimTile != null && b.aimTile.build != null && b.aimTile.build.team != b.team && collidesGround && !b.hasCollided(b.aimTile.build.id)){
+-                    target = b.aimTile.build;
++            if(target == null && homingPower > 0.0001f){
++                float realAimX = b.aimX < 0 ? b.x : b.aimX;
++                float realAimY = b.aimY < 0 ? b.y : b.aimY;
++
++                if(heals()){
++                    target = Units.closestTarget(null, realAimX, realAimY, homingRange,
++                    e -> e.checkTarget(collidesAir, collidesGround) && e.team != b.team && !b.hasCollided(e.id),
++                    t -> collidesGround && (t.team != b.team || t.damaged()) && !b.hasCollided(t.id)
++                    );
+                 }else{
+-                    target = Units.closestTarget(b.team, realAimX, realAimY, homingRange,
+-                        e -> e != null && e.checkTarget(collidesAir, collidesGround) && !b.hasCollided(e.id),
+-                        t -> t != null && collidesGround && !b.hasCollided(t.id));
++                    if(b.aimTile != null && b.aimTile.build != null && b.aimTile.build.team != b.team && collidesGround && !b.hasCollided(b.aimTile.build.id)){
++                        target = b.aimTile.build;
++                    }else{
++                        target = Units.closestTarget(b.team, realAimX, realAimY, homingRange,
++                            e -> e != null && e.checkTarget(collidesAir, collidesGround) && !b.hasCollided(e.id),
++                            t -> t != null && collidesGround && !b.hasCollided(t.id));
++                    }
+                 }
+             }
+ 
+-            if(target != null){
+-                b.vel.setAngle(Angles.moveToward(b.rotation(), b.angleTo(target), homingPower * Time.delta * 50f));
++            if(target != null && turnSpeed > 0.0001f){
++                b.vel.setAngle(Angles.moveToward(b.rotation(), b.angleTo(target), turnSpeed * Time.delta * 50f));
+             }
+         }
+ 
+@@ -823,6 +936,11 @@ public class BulletType extends Content implements Cloneable{
+             //pierceBuilding is not enabled by default, because a bullet may want to *not* pierce buildings
+         }
+ 
++        if(bounceCap > 0){
++            pierce = true;
++            pierceBuilding = true;
++        }
++
+         if(setDefaults){
+             if(lightning > 0){
+                 if(status == StatusEffects.none){
