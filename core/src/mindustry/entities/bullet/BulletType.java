@@ -63,6 +63,12 @@ public class BulletType extends Content implements Cloneable{
     public boolean removeAfterPierce = true;
     /** For piercing lasers, setting this to true makes it get absorbed by plastanium walls. */
     public boolean laserAbsorb = true;
+    /** Whether this bullet penetrates through terrain/walls, dealing damage without being removed. */
+    public boolean penetrate = false;
+    /** Maximum number of walls this bullet can penetrate before being removed. -1 for infinite. */
+    public int penetrateCount = 0;
+    /** Damage multiplier applied after each wall penetration. */
+    public float penetrateDamageFactor = 0.5f;
     /** Life fraction at which this bullet has the best range/damage/etc. Used for lasers and continuous turrets. */
     public float optimalLifeFract = 0f;
     /** Z layer to drawn on. */
@@ -143,6 +149,12 @@ public class BulletType extends Content implements Cloneable{
     public boolean hittable = true;
     /** Whether this bullet can be reflected. */
     public boolean reflectable = true;
+    /** Whether this bullet can ricochet (bounce) off walls. */
+    public boolean ricochet = false;
+    /** Maximum number of ricochets before the bullet is removed. -1 for infinite. */
+    public int ricochetCount = 0;
+    /** Damage multiplier applied after each ricochet bounce. */
+    public float ricochetDamageFactor = 0.8f;
     /** Whether this projectile can be absorbed by shields. */
     public boolean absorbable = true;
     /** If true, the angle param in create is ignored. */
@@ -317,6 +329,12 @@ public class BulletType extends Content implements Cloneable{
     public float homingDelay = -1f;
     /** Speed at which bullet rotates to follow cursor. <= 0 to disable. */
     public float followAimSpeed = 0f;
+    /** If true, bullet locks onto the nearest target within lockOnRange at spawn and persistently tracks it. */
+    public boolean lockOn = false;
+    /** Range within which the bullet locks onto a target at spawn. Must be > 0 for lock-on. */
+    public float lockOnRange = 0f;
+    /** Homing strength for lock-on tracking. Controls turn rate toward the locked target. */
+    public float lockOnStrength = 0.08f;
 
     /** Range of healing block suppression effect. */
     public float suppressionRange = -1f;
@@ -718,6 +736,7 @@ public class BulletType extends Content implements Cloneable{
         updateTrail(b);
         updateHoming(b);
         updateWeaving(b);
+        updateLockOn(b);
         updateTrailEffects(b);
         updateBulletInterval(b);
     }
@@ -777,6 +796,25 @@ public class BulletType extends Content implements Cloneable{
             Tmp.v1.set(h).sub(b);
             Tmp.v1.rotate(90f * Mathf.lerp(0f, 1f, 1f - Mathf.clamp((Tmp.v1.len() - circleShooterRadius) / circleShooterRadiusSmooth)));
             b.vel.add(Tmp.v1.limit(speed * circleShooterRotateSpeed * Time.delta)).limit(speed);
+        }
+    }
+
+    public void updateLockOn(Bullet b){
+        if(!lockOn || lockOnRange <= 0f) return;
+
+        if(b.lockOnTarget == null && b.time < 1f){
+            b.lockOnTarget = Units.closestTarget(b.team, b.x, b.y, lockOnRange,
+                e -> e != null && e.checkTarget(collidesAir, collidesGround),
+                t -> t != null && collidesGround);
+        }
+
+        if(b.lockOnTarget instanceof Healthc h && !h.isValid()){
+            b.lockOnTarget = null;
+            return;
+        }
+
+        if(b.lockOnTarget != null && b.lockOnTarget.within(b, lockOnRange * 1.5f)){
+            b.vel.setAngle(Angles.moveToward(b.rotation(), b.angleTo(b.lockOnTarget), lockOnStrength * Time.delta * 50f));
         }
     }
 

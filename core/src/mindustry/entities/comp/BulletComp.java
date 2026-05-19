@@ -53,6 +53,9 @@ abstract class BulletComp implements Timedc, Damagec, Hitboxc, Teamc, Posc, Draw
     transient boolean absorbed, hit;
     transient @Nullable Trail trail;
     transient int frags;
+    transient int penetrated;
+    transient int ricochetBounces;
+    transient @Nullable Teamc lockOnTarget;
 
     transient Posc stickyTarget;
     transient float stickyX, stickyY, stickyRotation, stickyRotationOffset;
@@ -279,7 +282,28 @@ abstract class BulletComp implements Timedc, Damagec, Hitboxc, Teamc, Posc, Draw
                             this.y = y * tilesize;
                         }
 
-                        if(!type.pierceBuilding){
+                        if(type.ricochet && build.team != team){
+                            float dx = this.x - (x * tilesize);
+                            float dy = this.y - (y * tilesize);
+                            if(Math.abs(dx) > Math.abs(dy)){
+                                vel.x = -vel.x;
+                            }else{
+                                vel.y = -vel.y;
+                            }
+                            damage *= type.ricochetDamageFactor;
+                            ricochetBounces++;
+                            if(type.ricochetCount >= 0 && ricochetBounces > type.ricochetCount){
+                                hit = true;
+                                doRemove = true;
+                            }
+                        }else if(type.penetrate && build.team != team){
+                            penetrated++;
+                            damage *= type.penetrateDamageFactor;
+                            if(type.penetrateCount >= 0 && penetrated > type.penetrateCount){
+                                hit = true;
+                                doRemove = true;
+                            }
+                        }else if(!type.pierceBuilding){
                             hit = true;
                             doRemove = true;
                         }else{
@@ -292,8 +316,7 @@ abstract class BulletComp implements Timedc, Damagec, Hitboxc, Teamc, Posc, Draw
                         remove();
                     }
 
-                    //stop raycasting when building is hit
-                    if(type.pierceBuilding) return;
+                    if(type.pierceBuilding || type.ricochet || type.penetrate) return;
                 }
             }
 
