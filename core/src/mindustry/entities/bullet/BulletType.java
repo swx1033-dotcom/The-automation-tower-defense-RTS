@@ -376,6 +376,26 @@ public class BulletType extends Content implements Cloneable{
 
     protected float cachedDps = -1;
 
+    // 反弹功能属性
+    public boolean bounces = false;
+    public int bounceCap = -1;
+    public float bounceRandomAngle = 0f;
+    public float bounceDamageFactor = 1f;
+    public boolean bounceOffWalls = true;
+    public boolean bounceOffUnits = false;
+
+    // 范围锁定功能属性
+    public boolean areaLock = false;
+    public float areaLockRadius = 80f;
+    public int areaLockMaxTargets = 5;
+    public boolean areaLockPrioritizeHealth = false;
+    public float areaLockSwitchInterval = 30f;
+
+    // 增强穿透功能属性
+    public boolean pierceDamageByDistance = false;
+    public float pierceDamageStartFactor = 1f;
+    public float pierceDamageEndFactor = 0.5f;
+
     public BulletType(float speed, float damage){
         this.speed = speed;
         this.damage = damage;
@@ -455,6 +475,16 @@ public class BulletType extends Content implements Cloneable{
     /** If direct is false, this is an indirect hit and the tile was already damaged.
      * TODO this is a mess. */
     public void hitTile(Bullet b, Building build, float x, float y, float initialHealth, boolean direct){
+        // 检查是否反弹
+        if(bounces && bounceOffWalls && build.team != b.team){
+            handleBounce(b, build, x, y);
+            // 如果反弹了，我们就不直接移除子弹，让它继续飞行
+            if(bounceCap == -1 || (int)b.fdata < bounceCap){
+                b.collided.add(build.id());
+                return;
+            }
+        }
+
         if(makeFire && build.team != b.team){
             Fires.create(build.tile);
         }
@@ -479,6 +509,16 @@ public class BulletType extends Content implements Cloneable{
 
     public void hitEntity(Bullet b, Hitboxc entity, float health){
         boolean wasDead = entity instanceof Unit u && u.dead;
+
+        // 检查是否反弹
+        if(bounces && bounceOffUnits){
+            handleBounce(b, entity, b.x, b.y);
+            // 如果反弹了，我们就不直接移除子弹，让它继续飞行
+            if(bounceCap == -1 || (int)b.fdata < bounceCap){
+                b.collided.add(entity.id());
+                return;
+            }
+        }
 
         if(entity instanceof Healthc h){
             float damage = b.damage;
@@ -522,8 +562,18 @@ public class BulletType extends Content implements Cloneable{
 
     public void handlePierce(Bullet b, float initialHealth, float x, float y){
         float sub = Mathf.zero(pierceDamageFactor) ? 0f : Math.max(initialHealth * pierceDamageFactor, 0);
-        //subtract health from each consecutive pierce
-        b.damage -= Float.isNaN(sub) ? b.damage : Math.min(b.damage, sub);
+        
+        // 如果启用了按距离衰减的穿透伤害
+        if(pierceDamageByDistance){
+            float traveled = Mathf.dst(b.originX, b.originY, x, y);
+            float range = calculateRange();
+            float progress = Mathf.clamp(traveled / range, 0f, 1f);
+            float factor = Mathf.lerp(pierceDamageStartFactor, pierceDamageEndFactor, progress);
+            b.damage = this.damage * b.damageMultiplier() * factor;
+        }else{
+            // 原来的逻辑：按穿透次数减少伤害
+            b.damage -= Float.isNaN(sub) ? b.damage : Math.min(b.damage, sub);
+        }
 
         if(removeAfterPierce && b.damage <= 0){
             b.hit = true;
@@ -717,9 +767,95 @@ public class BulletType extends Content implements Cloneable{
     public void update(Bullet b){
         updateTrail(b);
         updateHoming(b);
+        updateAreaLock(b);
         updateWeaving(b);
         updateTrailEffects(b);
         updateBulletInterval(b);
+    }
+
+    public void updateAreaLock(Bullet b){
+        if(!areaLock || b.time < 0) return;
+
+        // 使用子弹的数据字段存储当前锁定目标和计时器
+        if(b.data == null){
+            b.data = new AreaLockData();
+        }
+
+        if(b.data instanceof AreaLockData lockData){
+            lockData.timer += Time.delta;
+
+            // 切换目标的时机
+            if(lockData.timer >= areaLockSwitchInterval){
+                lockData.timer = 0f;
+
+                // 在范围内寻找目标
+                Teamc newTarget = findAreaLockTarget(b);
+                if(newTarget != null && newTarget != lockData.currentTarget){
+                    lockData.currentTarget = newTarget;
+                }
+            }
+
+            // 追踪当前目标
+            if(lockData.currentTarget != null && lockData.currentTarget instanceof Posc posc){
+                float angleTo = b.angleTo(posc);
+                b.vel.setAngle(Angles.moveToward(b.rotation(), angleTo, (homingPower > 0 ? homingPower : 0.1f) * Time.delta * 50f));
+            }
+        }
+    }
+
+    protected Teamc findAreaLockTarget(Bullet b){
+        return Units.closestTarget(b.team, b.x, b.y, areaLockRadius,
+            unit -> unit.checkTarget(collidesAir, collidesGround) && !b.hasCollided(unit.id),
+            building -> collidesGround && building.team != b.team && !b.hasCollided(building.id)
+        );
+    }
+
+    protected static class AreaLockData{
+        Teamc currentTarget;
+        float timer = 0f;
+    }
+
+    public void handleBounce(Bullet b, Hitboxc hit, float x, float y){
+        if(!bounces) return;
+
+        // 使用 fdata 跟踪反弹次数
+        int bounceCount = (int)b.fdata;
+
+        // 检查是否达到最大反弹次数
+        if(bounceCap != -1 && bounceCount >= bounceCap){
+            return;
+        }
+
+        // 计算反射角度
+        Vec2 normal = Tmp.v1;
+        if(hit instanceof Building build){
+            // 从建筑边缘计算法向量
+            normal.set(b.x - build.x, b.y - build.y).nor();
+        }else if(hit instanceof Unit unit){
+            // 从单位中心计算法向量
+            normal.set(b.x - unit.x, b.y - unit.y).nor();
+        }else{
+            // 默认反射
+            normal.set(b.vel).rotate(180f).nor();
+        }
+
+        // 反射速度向量
+        float dot = b.vel.dot(normal);
+        b.vel.set(normal).scl(-2f * dot).add(b.vel);
+
+        // 添加随机角度偏移
+        if(bounceRandomAngle > 0f){
+            b.vel.rotate(Mathf.range(bounceRandomAngle));
+        }
+
+        // 减少伤害
+        b.damage *= bounceDamageFactor;
+
+        // 增加反弹计数
+        b.fdata = bounceCount + 1;
+
+        // 添加反弹效果
+        hitEffect.at(x, y, b.rotation(), hitColor);
     }
 
     public void updateBulletInterval(Bullet b){
@@ -823,6 +959,11 @@ public class BulletType extends Content implements Cloneable{
             //pierceBuilding is not enabled by default, because a bullet may want to *not* pierce buildings
         }
 
+        // 反弹功能初始化
+        if(bounceCap >= 1){
+            bounces = true;
+        }
+
         if(setDefaults){
             if(lightning > 0){
                 if(status == StatusEffects.none){
@@ -832,6 +973,11 @@ public class BulletType extends Content implements Cloneable{
 
             if(fragBullet != null || splashDamageRadius > 0 || lightning > 0){
                 despawnHit = true;
+            }
+
+            // 范围锁定默认设置
+            if(areaLock && homingPower <= 0){
+                homingPower = 0.1f;
             }
         }
 

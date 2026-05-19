@@ -130,13 +130,18 @@ abstract class BulletComp implements Timedc, Damagec, Hitboxc, Teamc, Posc, Draw
                 stickTo(other);
             }
         }else{
+            // 检查是否有反弹处理 - 如果有，hitEntity/hitTile 会处理它
+            boolean shouldBounce = type.bounces && 
+                ((type.bounceOffUnits && other instanceof Unit) || 
+                 (type.bounceOffWalls && other instanceof Building));
+            
             type.hit(self(), x, y);
 
-            //must be last.
-            if(!type.pierce){
+            // 如果不是反弹且不是穿透，则移除子弹
+            if(!shouldBounce && !type.pierce){
                 hit = true;
                 remove();
-            }else{
+            }else if(type.pierce){
                 collided.add(other.id());
             }
 
@@ -273,13 +278,16 @@ abstract class BulletComp implements Timedc, Damagec, Hitboxc, Teamc, Posc, Draw
                         remove = build.collision(self());
                     }
 
+                    // 检查是否应该反弹
+                    boolean shouldBounce = type.bounces && type.bounceOffWalls && build.team != team;
+
                     if(remove || type.collidesTeam){
                         if(Mathf.dst2(lastX, lastY, x * tilesize, y * tilesize) < Mathf.dst2(lastX, lastY, this.x, this.y)){
                             this.x = x * tilesize;
                             this.y = y * tilesize;
                         }
 
-                        if(!type.pierceBuilding){
+                        if(!shouldBounce && !type.pierceBuilding){
                             hit = true;
                             doRemove = true;
                         }else{
@@ -288,12 +296,14 @@ abstract class BulletComp implements Timedc, Damagec, Hitboxc, Teamc, Posc, Draw
                     }
 
                     type.hitTile(self(), build, x * tilesize, y * tilesize, health, true);
-                    if(doRemove){
+                    
+                    // 如果是反弹，不应该移除子弹
+                    if(doRemove && !shouldBounce){
                         remove();
                     }
 
-                    //stop raycasting when building is hit
-                    if(type.pierceBuilding) return;
+                    //stop raycasting when building is hit (除非是反弹)
+                    if(type.pierceBuilding || shouldBounce) return;
                 }
             }
 
