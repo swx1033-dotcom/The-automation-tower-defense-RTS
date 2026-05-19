@@ -188,6 +188,8 @@ public class GenericCrafter extends Block{
         public float totalProgress;
         public float warmup;
 
+        public boolean wasDisabled;
+
         @Override
         public void draw(){
             drawer.draw(this);
@@ -197,6 +199,35 @@ public class GenericCrafter extends Block{
         public void drawLight(){
             super.drawLight();
             drawer.drawLight(this);
+        }
+
+        public boolean isOutputFull(){
+            if(outputItems != null){
+                for(var output : outputItems){
+                    if(items.get(output.item) + output.amount > itemCapacity){
+                        return true;
+                    }
+                }
+            }
+
+            if(outputLiquids != null && !ignoreLiquidFullness){
+                boolean allFull = true;
+                for(var output : outputLiquids){
+                    if(liquids.get(output.liquid) >= liquidCapacity - 0.001f){
+                        if(!dumpExtraLiquid){
+                            return true;
+                        }
+                    }else{
+                        allFull = false;
+                    }
+                }
+
+                if(allFull){
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         @Override
@@ -233,6 +264,17 @@ public class GenericCrafter extends Block{
 
         @Override
         public void updateTile(){
+            if(wasDisabled){
+                enabled = true;
+                wasDisabled = false;
+            }else if(enabled && block.hasConsumers && potentialEfficiency <= 0.0001f){
+                enabled = false;
+                wasDisabled = true;
+            }else if(enabled && isOutputFull()){
+                enabled = false;
+                wasDisabled = true;
+            }
+
             if(efficiency > 0){
 
                 progress += getProgressIncrease(craftTime);
