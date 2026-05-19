@@ -198,6 +198,30 @@ public class BulletType extends Content implements Cloneable{
     /** Amount of shaking produced when this bullet hits something or despawns. */
     public float hitShake = 0f, despawnShake = 0f;
 
+    // --- Advanced Tactical Ammo Effects ---
+    /** Advanced piercing that prevents bullet damage degradation. */
+    public boolean tacticalPierce = false;
+    /** Whether this bullet bounces off entities to hit another. */
+    public boolean bounce = false;
+    /** How many times this bullet can bounce. */
+    public int bounceCap = 2;
+    /** Range to search for the next target when bouncing. */
+    public float bounceRange = 100f;
+    /** Damage multiplier applied after each bounce. */
+    public float bounceDamageMultiplier = 1f;
+
+    /** Whether the bullet locks onto enemies in an area. */
+    public boolean areaLock = false;
+    /** Range for area locking. */
+    public float areaLockRange = 80f;
+    /** How often the area lock triggers (ticks). */
+    public float areaLockInterval = 15f;
+    /** Maximum targets to lock onto per interval. */
+    public int areaLockTargets = 3;
+    /** Bullet type to spawn towards locked targets. If null, strikes with lightning instead. */
+    public @Nullable BulletType areaLockBullet = null;
+    // ----------------------------------------
+
     /** Bullet type that is created when this bullet expires. */
     public @Nullable BulletType fragBullet = null;
     /** If true, frag bullets are delayed to the next frame. Fixes obscure bugs with piercing bullet types spawning frags immediately and screwing up the Damage temporary variables. */
@@ -399,6 +423,10 @@ public class BulletType extends Content implements Cloneable{
     public void afterPatch(){
         super.afterPatch();
 
+        if(bounce || tacticalPierce){
+            pierce = true;
+        }
+
         range = calculateRange();
     }
 
@@ -518,9 +546,23 @@ public class BulletType extends Content implements Cloneable{
         }
 
         handlePierce(b, health, entity.x(), entity.y());
+
+        // --- Tactical Ammo: Bounce ---
+        if(bounce && (bounceCap < 0 || b.collided.size <= bounceCap)){
+            Teamc nextTarget = Units.closestTarget(b.team, b.x, b.y, bounceRange, 
+                e -> e != null && e.checkTarget(collidesAir, collidesGround) && !b.hasCollided(e.id) && e != entity, 
+                t -> t != null && collidesGround && !b.hasCollided(t.id) && t != entity);
+                
+            if(nextTarget != null){
+                b.vel.setAngle(b.angleTo(nextTarget));
+                b.damage *= bounceDamageMultiplier;
+            }
+        }
     }
 
     public void handlePierce(Bullet b, float initialHealth, float x, float y){
+        if(tacticalPierce) return; // Tactical pierce prevents damage loss
+
         float sub = Mathf.zero(pierceDamageFactor) ? 0f : Math.max(initialHealth * pierceDamageFactor, 0);
         //subtract health from each consecutive pierce
         b.damage -= Float.isNaN(sub) ? b.damage : Math.min(b.damage, sub);
@@ -720,6 +762,37 @@ public class BulletType extends Content implements Cloneable{
         updateWeaving(b);
         updateTrailEffects(b);
         updateBulletInterval(b);
+        updateAreaLock(b);
+    }
+
+    public void updateAreaLock(Bullet b){
+        if(areaLock && b.timer.get(3, areaLockInterval)){
+            Seq<Teamc> targets = new Seq<>();
+            Units.nearbyEnemies(b.team, b.x - areaLockRange, b.y - areaLockRange, areaLockRange * 2f, areaLockRange * 2f, e -> {
+                if(e.checkTarget(collidesAir, collidesGround) && e.dst(b) <= areaLockRange){
+                    targets.add(e);
+                }
+            });
+
+            if(collidesGround){
+                indexer.eachBlock(null, b.x, b.y, areaLockRange, t -> t.team != b.team, t -> {
+                    targets.add(t);
+                });
+            }
+
+            if(targets.size > 0){
+                targets.shuffle();
+                int count = Math.min(targets.size, areaLockTargets);
+                for(int i = 0; i < count; i++){
+                    Teamc t = targets.get(i);
+                    if(areaLockBullet != null){
+                        areaLockBullet.create(b, b.x, b.y, b.angleTo(t));
+                    } else {
+                        Lightning.create(b, lightningColor, b.damage * 0.5f, b.x, b.y, b.angleTo(t), lightningLength);
+                    }
+                }
+            }
+        }
     }
 
     public void updateBulletInterval(Bullet b){
