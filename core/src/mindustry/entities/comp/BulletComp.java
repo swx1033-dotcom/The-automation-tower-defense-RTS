@@ -130,6 +130,10 @@ abstract class BulletComp implements Timedc, Damagec, Hitboxc, Teamc, Posc, Draw
                 stickTo(other);
             }
         }else{
+            if(type.tryBounce(self(), x, y, other)){
+                return;
+            }
+
             type.hit(self(), x, y);
 
             //must be last.
@@ -277,6 +281,10 @@ abstract class BulletComp implements Timedc, Damagec, Hitboxc, Teamc, Posc, Draw
                         if(Mathf.dst2(lastX, lastY, x * tilesize, y * tilesize) < Mathf.dst2(lastX, lastY, this.x, this.y)){
                             this.x = x * tilesize;
                             this.y = y * tilesize;
+                        }
+
+                        if(type.tryBounce(self(), this.x, this.y, build)){
+                            return;
                         }
 
                         if(!type.pierceBuilding){

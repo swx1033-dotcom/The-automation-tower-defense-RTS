@@ -1,0 +1,166 @@
+diff --git a/core/src/mindustry/entities/bullet/BulletType.java b/core/src/mindustry/entities/bullet/BulletType.java
+index 10d99f323c..56d7faf26d 100644
+--- a/core/src/mindustry/entities/bullet/BulletType.java
++++ b/core/src/mindustry/entities/bullet/BulletType.java
+@@ -57,6 +57,8 @@ public class BulletType extends Content implements Cloneable{
+     public int pierceCap = -1;
+     /** Multiplier of damage decreased per health pierced. */
+     public float pierceDamageFactor = 0f;
++    /** If true, damage is reduced by a fixed percentage per pierce instead of based on target health. */
++    public float pierceDamageReduction = 0f;
+     /** If positive, limits non-splash damage dealt to a fraction of the target's maximum health. */
+     public float maxDamageFraction = -1f;
+     /** If false, this bullet isn't removed after pierceCap is exceeded. Expert usage only. */
+@@ -198,6 +200,29 @@ public class BulletType extends Content implements Cloneable{
+     /** Amount of shaking produced when this bullet hits something or despawns. */
+     public float hitShake = 0f, despawnShake = 0f;
+ 
++    /** Number of times this bullet can bounce off surfaces. -1 for unlimited. */
++    public int bounceCount = 0;
++    /** Current bounce count (tracked per bullet instance via data). */
++    /** Angle randomness added on bounce in degrees. */
++    public float bounceRandomSpread = 0f;
++    /** Damage multiplier applied after each bounce. */
++    public float bounceDamageMultiplier = 0.8f;
++    /** If true, bullet bounces off tiles/buildings as well as units. */
++    public boolean bounceOffTiles = true;
++    /** If true, bullet bounces off units. */
++    public boolean bounceOffUnits = false;
++    /** Minimum velocity required for bounce to occur. */
++    public float bounceMinVelocity = 0f;
++    /** Effect shown on bounce. */
++    public Effect bounceEffect = Fx.sparkShoot;
++
++    /** Range for target locking. -1 to disable. */
++    public float lockRange = -1f;
++    /** If true, locked target can be changed when closer target appears. */
++    public boolean lockSwitchTarget = false;
++    /** Priority for target locking: 0=first target, 1=closest, 2=lowest health. */
++    public int lockTargetPriority = 1;
++
+     /** Bullet type that is created when this bullet expires. */
+     public @Nullable BulletType fragBullet = null;
+     /** If true, frag bullets are delayed to the next frame. Fixes obscure bugs with piercing bullet types spawning frags immediately and screwing up the Damage temporary variables. */
+@@ -525,12 +550,45 @@ public class BulletType extends Content implements Cloneable{
+         //subtract health from each consecutive pierce
+         b.damage -= Float.isNaN(sub) ? b.damage : Math.min(b.damage, sub);
+ 
++        if(pierceDamageReduction > 0f){
++            b.damage *= (1f - pierceDamageReduction);
++        }
++
+         if(removeAfterPierce && b.damage <= 0){
+             b.hit = true;
+             b.remove();
+         }
+     }
+ 
++    public boolean tryBounce(Bullet b, float x, float y, Hitboxc target){
++        if(bounceCount == 0) return false;
++
++        int currentBounces = 0;
++        if(b.data instanceof Integer i){
++            currentBounces = i;
++        }
++        if(bounceCount > 0 && currentBounces >= bounceCount) return false;
++
++        if(bounceMinVelocity > 0f && b.vel.len() < bounceMinVelocity) return false;
++
++        boolean canBounce = false;
++        if(target instanceof Building && bounceOffTiles) canBounce = true;
++        if(target instanceof Unit && bounceOffUnits) canBounce = true;
++
++        if(!canBounce) return false;
++
++        float newAngle = b.rotation() + 180f + Mathf.range(bounceRandomSpread);
++        b.damage *= bounceDamageMultiplier;
++
++        b.vel.trns(newAngle, b.vel.len());
++
++        b.data = currentBounces + 1;
++
++        bounceEffect.at(x, y, newAngle);
++
++        return true;
++    }
++
+     public float damageMultiplier(Bullet b){
+         if(b.owner instanceof Unit u) return u.damageMultiplier() * state.rules.unitDamage(b.team);
+         if(b.owner instanceof Building) return state.rules.blockDamage(b.team);
+@@ -720,6 +778,50 @@ public class BulletType extends Content implements Cloneable{
+         updateWeaving(b);
+         updateTrailEffects(b);
+         updateBulletInterval(b);
++        updateTargetLock(b);
++    }
++
++    public void updateTargetLock(Bullet b){
++        if(lockRange <= 0f) return;
++
++        Teamc currentTarget = null;
++        if(b.stickyTarget != null){
++            currentTarget = b.stickyTarget;
++        }
++
++        Teamc newTarget = Units.closestTarget(b.team, b.x, b.y, lockRange,
++            e -> e.checkTarget(collidesAir, collidesGround) && e.team != b.team,
++            t -> collidesGround && t.team != b.team
++        );
++
++        if(newTarget == null) return;
++
++        if(currentTarget != null && !lockSwitchTarget){
++            return;
++        }
++
++        boolean shouldSwitch = false;
++        if(currentTarget == null){
++            shouldSwitch = true;
++        }else if(lockSwitchTarget){
++            switch(lockTargetPriority){
++                case 1 -> {
++                    float currentDist = b.dst(currentTarget);
++                    float newDist = b.dst(newTarget);
++                    shouldSwitch = newDist < currentDist;
++                }
++                case 2 -> {
++                    if(currentTarget instanceof Healthc ch && newTarget instanceof Healthc nh){
++                        shouldSwitch = nh.health() < ch.health();
++                    }
++                }
++                default -> shouldSwitch = true;
++            }
++        }
++
++        if(shouldSwitch){
++            b.stickTo(newTarget);
++        }
+     }
+ 
+     public void updateBulletInterval(Bullet b){
+diff --git a/core/src/mindustry/entities/comp/BulletComp.java b/core/src/mindustry/entities/comp/BulletComp.java
+index ff1dd289e2..cdc8355da4 100644
+--- a/core/src/mindustry/entities/comp/BulletComp.java
++++ b/core/src/mindustry/entities/comp/BulletComp.java
+@@ -130,6 +130,10 @@ abstract class BulletComp implements Timedc, Damagec, Hitboxc, Teamc, Posc, Draw
+                 stickTo(other);
+             }
+         }else{
++            if(type.tryBounce(self(), x, y, other)){
++                return;
++            }
++
+             type.hit(self(), x, y);
+ 
+             //must be last.
+@@ -279,6 +283,10 @@ abstract class BulletComp implements Timedc, Damagec, Hitboxc, Teamc, Posc, Draw
+                             this.y = y * tilesize;
+                         }
+ 
++                        if(type.tryBounce(self(), this.x, this.y, build)){
++                            return;
++                        }
++
+                         if(!type.pierceBuilding){
+                             hit = true;
+                             doRemove = true;
