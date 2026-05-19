@@ -1,0 +1,58 @@
+diff --git a/core/src/mindustry/world/blocks/production/GenericCrafter.java b/core/src/mindustry/world/blocks/production/GenericCrafter.java
+index 0fc1ef457b..e1d77ef689 100644
+--- a/core/src/mindustry/world/blocks/production/GenericCrafter.java
++++ b/core/src/mindustry/world/blocks/production/GenericCrafter.java
+@@ -201,6 +201,12 @@ public class GenericCrafter extends Block{
+ 
+         @Override
+         public boolean shouldConsume(){
++            //检查是否有足够的原料
++            if(!canConsume()){
++                return false;
++            }
++            
++            //检查输出物品是否有足够空间
+             if(outputItems != null){
+                 for(var output : outputItems){
+                     if(items.get(output.item) + output.amount > itemCapacity){
+@@ -209,6 +215,7 @@ public class GenericCrafter extends Block{
+                 }
+             }
+ 
++            //检查输出液体是否有足够空间
+             if(outputLiquids != null && !ignoreLiquidFullness){
+                 boolean allFull = true;
+                 for(var output : outputLiquids){
+@@ -217,12 +224,10 @@ public class GenericCrafter extends Block{
+                             return false;
+                         }
+                     }else{
+-                        //if there's still space left, it's not full for all liquids
+                         allFull = false;
+                     }
+                 }
+ 
+-                //if there is no space left for any liquid, it can't reproduce
+                 if(allFull){
+                     return false;
+                 }
+@@ -233,7 +238,8 @@ public class GenericCrafter extends Block{
+ 
+         @Override
+         public void updateTile(){
+-            if(efficiency > 0){
++            //只有在应该消费时才继续生产
++            if(efficiency > 0 && shouldConsume()){
+ 
+                 progress += getProgressIncrease(craftTime);
+                 warmup = Mathf.approachDelta(warmup, warmupTarget(), warmupSpeed);
+@@ -256,7 +262,8 @@ public class GenericCrafter extends Block{
+             //TODO may look bad, revert to edelta() if so
+             totalProgress += warmup * Time.delta;
+ 
+-            if(progress >= 1f){
++            //只有在应该消费时才完成生产
++            if(progress >= 1f && shouldConsume()){
+                 craft();
+             }
+ 
