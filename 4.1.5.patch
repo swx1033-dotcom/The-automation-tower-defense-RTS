@@ -1,0 +1,198 @@
+diff --git a/core/src/mindustry/world/blocks/production/GenericCrafter.java b/core/src/mindustry/world/blocks/production/GenericCrafter.java
+index 0fc1ef457b..3bb6f26a1b 100644
+--- a/core/src/mindustry/world/blocks/production/GenericCrafter.java
++++ b/core/src/mindustry/world/blocks/production/GenericCrafter.java
+@@ -21,19 +21,13 @@ import mindustry.world.meta.*;
+ import static mindustry.Vars.*;
+ 
+ public class GenericCrafter extends Block{
+-    /** Written to outputItems as a single-element array if outputItems is null. */
+     public @Nullable ItemStack outputItem;
+-    /** Overwrites outputItem if not null. */
+     public @Nullable ItemStack[] outputItems;
+ 
+-    /** Written to outputLiquids as a single-element array if outputLiquids is null. */
+     public @Nullable LiquidStack outputLiquid;
+-    /** Overwrites outputLiquid if not null. */
+     public @Nullable LiquidStack[] outputLiquids;
+-    /** Liquid output directions, specified in the same order as outputLiquids. Use -1 to dump in every direction. Rotations are relative to block. */
+     public int[] liquidOutputDirections = {-1};
+ 
+-    /** if true, crafters with multiple liquid outputs will dump excess when there's still space for at least one liquid type */
+     public boolean dumpExtraLiquid = true;
+     public boolean ignoreLiquidFullness = false;
+ 
+@@ -43,7 +37,6 @@ public class GenericCrafter extends Block{
+     public float updateEffectChance = 0.04f;
+     public float updateEffectSpread = 4f;
+     public float warmupSpeed = 0.019f;
+-    /** Only used for legacy cultivator blocks. */
+     @NoPatch
+     public boolean legacyReadWarmup = false;
+ 
+@@ -82,12 +75,9 @@ public class GenericCrafter extends Block{
+     public void setBars(){
+         super.setBars();
+ 
+-        //set up liquid bars for liquid outputs
+         if(outputLiquids != null && outputLiquids.length > 0){
+-            //no need for dynamic liquid bar
+             removeBar("liquid");
+ 
+-            //then display output buffer
+             for(var stack : outputLiquids){
+                 addLiquidBar(stack.liquid);
+             }
+@@ -123,7 +113,6 @@ public class GenericCrafter extends Block{
+         if(outputLiquids == null && outputLiquid != null){
+             outputLiquids = new LiquidStack[]{outputLiquid};
+         }
+-        //write back to outputLiquid, as it helps with sensing
+         if(outputLiquid == null && outputLiquids != null && outputLiquids.length > 0){
+             outputLiquid = outputLiquids[0];
+         }
+@@ -187,6 +176,7 @@ public class GenericCrafter extends Block{
+         public float progress;
+         public float totalProgress;
+         public float warmup;
++        public boolean paused = false;
+ 
+         @Override
+         public void draw(){
+@@ -217,12 +207,10 @@ public class GenericCrafter extends Block{
+                             return false;
+                         }
+                     }else{
+-                        //if there's still space left, it's not full for all liquids
+                         allFull = false;
+                     }
+                 }
+ 
+-                //if there is no space left for any liquid, it can't reproduce
+                 if(allFull){
+                     return false;
+                 }
+@@ -231,29 +219,69 @@ public class GenericCrafter extends Block{
+             return enabled;
+         }
+ 
++        public boolean checkInputMaterials(){
++            if(consumes == null) return true;
++
++            for(var consume : consumes.items){
++                if(consume != null && items.get(consume.item) < consume.amount){
++                    return false;
++                }
++            }
++            return true;
++        }
++
++        public boolean checkOutputSpace(){
++            if(outputItems != null){
++                for(var output : outputItems){
++                    if(items.get(output.item) + output.amount > itemCapacity){
++                        return false;
++                    }
++                }
++            }
++
++            if(outputLiquids != null && !ignoreLiquidFullness){
++                for(var output : outputLiquids){
++                    if(liquids.get(output.liquid) >= liquidCapacity - 0.001f){
++                        return false;
++                    }
++                }
++            }
++            return true;
++        }
++
+         @Override
+         public void updateTile(){
+             if(efficiency > 0){
++                if(!paused){
++                    if(!checkInputMaterials() || !checkOutputSpace()){
++                        paused = true;
++                    }
++                }else{
++                    if(checkInputMaterials() && checkOutputSpace()){
++                        paused = false;
++                    }
++                }
+ 
+-                progress += getProgressIncrease(craftTime);
+-                warmup = Mathf.approachDelta(warmup, warmupTarget(), warmupSpeed);
++                if(!paused){
++                    progress += getProgressIncrease(craftTime);
++                    warmup = Mathf.approachDelta(warmup, warmupTarget(), warmupSpeed);
+ 
+-                //continuously output based on efficiency
+-                if(outputLiquids != null){
+-                    float inc = getProgressIncrease(1f);
+-                    for(var output : outputLiquids){
+-                        handleLiquid(this, output.liquid, Math.min(output.amount * inc, liquidCapacity - liquids.get(output.liquid)));
++                    if(outputLiquids != null){
++                        float inc = getProgressIncrease(1f);
++                        for(var output : outputLiquids){
++                            handleLiquid(this, output.liquid, Math.min(output.amount * inc, liquidCapacity - liquids.get(output.liquid)));
++                        }
+                     }
+-                }
+ 
+-                if(wasVisible && Mathf.chanceDelta(updateEffectChance)){
+-                    updateEffect.at(x + Mathf.range(size * updateEffectSpread), y + Mathf.range(size * updateEffectSpread));
++                    if(wasVisible && Mathf.chanceDelta(updateEffectChance)){
++                        updateEffect.at(x + Mathf.range(size * updateEffectSpread), y + Mathf.range(size * updateEffectSpread));
++                    }
+                 }
+             }else{
++                paused = false;
+                 warmup = Mathf.approachDelta(warmup, 0f, warmupSpeed);
+             }
+ 
+-            //TODO may look bad, revert to edelta() if so
+             totalProgress += warmup * Time.delta;
+ 
+             if(progress >= 1f){
+@@ -269,7 +297,6 @@ public class GenericCrafter extends Block{
+                 return super.getProgressIncrease(baseTime);
+             }
+ 
+-            //limit progress increase by maximum amount of liquid it can produce
+             float scaling = 1f, max = 1f;
+             if(outputLiquids != null){
+                 max = 0f;
+@@ -280,7 +307,6 @@ public class GenericCrafter extends Block{
+                 }
+             }
+ 
+-            //when dumping excess take the maximum value instead of the minimum.
+             return super.getProgressIncrease(baseTime) * (dumpExtraLiquid ? Math.min(max, 1f) : scaling);
+         }
+ 
+@@ -334,7 +360,6 @@ public class GenericCrafter extends Block{
+         @Override
+         public double sense(LAccess sensor){
+             if(sensor == LAccess.progress) return progress();
+-            //attempt to prevent wild total liquid fluctuation, at least for crafters
+             if(sensor == LAccess.totalLiquids && outputLiquid != null) return liquids.get(outputLiquid.liquid);
+             return super.sense(sensor);
+         }
+@@ -359,6 +384,7 @@ public class GenericCrafter extends Block{
+             super.write(write);
+             write.f(progress);
+             write.f(warmup);
++            write.b(paused);
+             if(legacyReadWarmup) write.f(0f);
+         }
+ 
+@@ -367,7 +393,8 @@ public class GenericCrafter extends Block{
+             super.read(read, revision);
+             progress = read.f();
+             warmup = read.f();
++            paused = read.b();
+             if(legacyReadWarmup) read.f();
+         }
+     }
+-}
++}
+\ No newline at end of file
