@@ -233,6 +233,45 @@ public class GenericCrafter extends Block{
 
         @Override
         public void updateTile(){
+            // 新增启停管控逻辑：增设产物仓储满值停机判定，避免多余资源溢出丢失
+            boolean isFull = false;
+            if(outputItems != null){
+                for(var output : outputItems){
+                    if(items.get(output.item) + output.amount > itemCapacity){
+                        isFull = true;
+                        break;
+                    }
+                }
+            }
+            if(outputLiquids != null && !ignoreLiquidFullness){
+                boolean allFull = true;
+                for(var output : outputLiquids){
+                    if(liquids.get(output.liquid) >= liquidCapacity - 0.001f){
+                        if(!dumpExtraLiquid){
+                            isFull = true;
+                            break;
+                        }
+                    }else{
+                        allFull = false;
+                    }
+                }
+                if(allFull) isFull = true;
+            }
+
+            // 新增原料不足自动暂停、物料充足自动重启生产逻辑
+            boolean hasInputs = true;
+            for(var cons : block.nonOptionalConsumers){
+                if(cons.efficiency(this) <= 0f){
+                    hasInputs = false;
+                    break;
+                }
+            }
+
+            // 综合管控：当产物满值或原料不足时，强制停机暂停生产
+            if(isFull || !hasInputs){
+                efficiency = 0f;
+            }
+
             if(efficiency > 0){
 
                 progress += getProgressIncrease(craftTime);
