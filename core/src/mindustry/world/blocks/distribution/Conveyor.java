@@ -255,7 +255,6 @@ public class Conveyor extends Block implements Autotiler{
             minitem = 1f;
             mid = 0;
 
-            //skip updates if possible
             if(len == 0 && Mathf.equal(timeScale, 1f)){
                 clogHeat = 0f;
                 sleep();
@@ -273,14 +272,16 @@ public class Conveyor extends Block implements Autotiler{
 
                 if(ys[i] > nextMax) ys[i] = nextMax;
                 if(ys[i] > 0.5 && i > 0) mid = i - 1;
-                xs[i] = Mathf.approach(xs[i], 0, moved*2);
+                xs[i] = Mathf.approach(xs[i], 0, moved * 2);
 
                 if(ys[i] >= 1f && pass(ids[i])){
-                    //align X position if passing forwards
-                    if(aligned){
+                    if(aligned && nextc != null){
                         nextc.xs[nextc.lastInserted] = xs[i];
                     }
-                    //remove last item
+                    items.remove(ids[i], len - i);
+                    len = Math.min(i, len);
+                }else if(i == len - 1 && aligned && nextc != null && nextc.minitem < itemSpace && pass(ids[i])){
+                    nextc.xs[nextc.lastInserted] = xs[i];
                     items.remove(ids[i], len - i);
                     len = Math.min(i, len);
                 }else if(ys[i] < minitem){
@@ -291,53 +292,57 @@ public class Conveyor extends Block implements Autotiler{
             if(minitem < itemSpace + (blendbits == 1 ? 0.3f : 0f)){
                 clogHeat = Mathf.approachDelta(clogHeat, 1f, 1f / 60f);
             }else{
-                clogHeat = 0f;
+                clogHeat = Mathf.approachDelta(clogHeat, 0f, 1f / 30f);
             }
 
             noSleep();
         }
 
         public boolean pass(Item item){
-            if(item != null && next != null && next.team == team && next.acceptItem(this, item)){
+            if(item == null) return false;
+
+            if(next != null && next.team == team && next.acceptItem(this, item)){
                 next.handleItem(this, item);
                 return true;
             }
+
+            if(clogHeat <= 0.5f) return false;
+
+            Building left = left(), right = right();
+            boolean leftValid = left != null && left.team == team && left != back() && left.acceptItem(this, item);
+            boolean rightValid = right != null && right.team == team && right != back() && right.acceptItem(this, item);
+
+            if(leftValid && rightValid){
+                float leftSpace = getAvailableSpace(left);
+                float rightSpace = getAvailableSpace(right);
+                if(leftSpace >= rightSpace){
+                    left.handleItem(this, item);
+                }else{
+                    right.handleItem(this, item);
+                }
+                return true;
+            }else if(leftValid){
+                left.handleItem(this, item);
+                return true;
+            }else if(rightValid){
+                right.handleItem(this, item);
+                return true;
+            }
+
             return false;
         }
 
-        @Override
-        public int removeStack(Item item, int amount){
-            noSleep();
-            int removed = 0;
-
-            for(int j = 0; j < amount; j++){
-                for(int i = 0; i < len; i++){
-                    if(ids[i] == item){
-                        remove(i);
-                        removed ++;
-                        break;
-                    }
-                }
+        private float getAvailableSpace(Building build){
+            if(build instanceof ConveyorBuild cb){
+                return cb.minitem;
             }
-
-            items.remove(item, removed);
-            return removed;
+            if(build.block.hasItems && build.items != null && build.block.itemCapacity > 0){
+                return 1f - (float)build.items.total() / build.block.itemCapacity;
+            }
+            return 1f;
         }
 
-        @Override
-        public void getStackOffset(Item item, Vec2 trns){
-            trns.trns(rotdeg() + 180f, tilesize / 2f);
-        }
-
-        @Override
-        public int acceptStack(Item item, int amount, Teamc source){
-            return Math.min((int)(minitem / itemSpace), amount);
-        }
-
-        @Override
-        public void handleStack(Item item, int amount, Teamc source){
-            amount = Math.min(amount, capacity - len);
-
+        public void handleStack(Item item, int amount, @Nullable Teamc source){
             for(int i = amount - 1; i >= 0; i--){
                 add(0);
                 xs[0] = 0;
@@ -355,7 +360,19 @@ public class Conveyor extends Block implements Autotiler{
             Tile facing = Edges.getFacingEdge(source.tile, tile);
             if(facing == null) return false;
             int direction = Math.abs(facing.relativeTo(tile.x, tile.y) - rotation);
-            return (((direction == 0) && minitem >= itemSpace) || ((direction % 2 == 1) && minitem > 0.7f)) && !(source.block.rotate && next == source);
+
+            if(source.block.rotate && next == source) return false;
+
+            if(direction == 0){
+                return minitem >= itemSpace;
+            }else if(direction % 2 == 1){
+                float threshold = 0.6f;
+                if(source instanceof ConveyorBuild scb && scb.clogHeat > 0.5f){
+                    threshold = 0.4f;
+                }
+                return minitem > threshold;
+            }
+            return false;
         }
 
         @Override
@@ -488,3 +505,4 @@ public class Conveyor extends Block implements Autotiler{
         }
     }
 }
+Math.max(o + 1, )
