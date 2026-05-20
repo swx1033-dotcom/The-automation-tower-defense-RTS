@@ -131,6 +131,10 @@ public class Conveyor extends Block implements Autotiler{
         public @Nullable ConveyorBuild nextc;
         //whether the next conveyor's rotation == tile rotation
         public boolean aligned;
+        
+        //智能分流相关
+        public Seq<Building> adjacentBuildings = new Seq<>();
+        public int distributionIndex = 0;
 
         public int lastInserted, mid;
         public float minitem = 1;
@@ -221,6 +225,16 @@ public class Conveyor extends Block implements Autotiler{
             next = front();
             nextc = next instanceof ConveyorBuild && next.team == team ? (ConveyorBuild)next : null;
             aligned = nextc != null && rotation == next.rotation;
+            
+            //更新相邻建筑列表（用于智能分流）
+            adjacentBuildings.clear();
+            //检查四个方向的相邻建筑（除了后方，避免回流）
+            for(int i = 0; i < 4; i++){
+                Building other = nearby(i);
+                if(other != null && other.team == team && i != Mathf.mod(rotation + 2, 4)){
+                    adjacentBuildings.add(other);
+                }
+            }
         }
 
         @Override
@@ -277,12 +291,13 @@ public class Conveyor extends Block implements Autotiler{
 
                 if(ys[i] >= 1f && pass(ids[i])){
                     //align X position if passing forwards
-                    if(aligned){
+                    if(aligned && next != null && next instanceof ConveyorBuild){
                         nextc.xs[nextc.lastInserted] = xs[i];
                     }
-                    //remove last item
-                    items.remove(ids[i], len - i);
-                    len = Math.min(i, len);
+                    //安全移除物品（修复物品丢失问题）
+                    items.remove(ids[i], 1);
+                    remove(i);
+                    i--; //由于数组索引变更，需要调整i
                 }else if(ys[i] < minitem){
                     minitem = ys[i];
                 }
@@ -298,11 +313,39 @@ public class Conveyor extends Block implements Autotiler{
         }
 
         public boolean pass(Item item){
-            if(item != null && next != null && next.team == team && next.acceptItem(this, item)){
-                next.handleItem(this, item);
-                return true;
+            if(item != null){
+                //首先尝试正前方的建筑（保持原有逻辑）
+                if(next != null && next.team == team && next.acceptItem(this, item)){
+                    next.handleItem(this, item);
+                    return true;
+                }
+                
+                //如果前方拥堵，尝试使用智能分流
+                return smartDistribute(item);
             }
             return false;
+        }
+        
+        //智能分流方法：尝试向所有相邻建筑分配物品
+        private boolean smartDistribute(Item item){
+            if(adjacentBuildings.size == 0) return false;
+            
+            //收集所有可以接受物品的建筑
+            Seq<Building> available = new Seq<>();
+            for(Building b : adjacentBuildings){
+                if(b.acceptItem(this, item)){
+                    available.add(b);
+                }
+            }
+            
+            if(available.size == 0) return false;
+            
+            //使用循环索引进行均衡分配
+            Building target = available.get(distributionIndex % available.size);
+            distributionIndex = (distributionIndex + 1) % Math.max(1, adjacentBuildings.size);
+            
+            target.handleItem(this, item);
+            return true;
         }
 
         @Override
