@@ -139,6 +139,8 @@ public class Conveyor extends Block implements Autotiler{
         public int blendsclx = 1, blendscly = 1;
 
         public float clogHeat = 0f;
+        
+        public boolean passLeft = true;
 
         @Override
         public void draw(){
@@ -253,7 +255,7 @@ public class Conveyor extends Block implements Autotiler{
         @Override
         public void updateTile(){
             minitem = 1f;
-            mid = 0;
+            mid = len;
 
             //skip updates if possible
             if(len == 0 && Mathf.equal(timeScale, 1f)){
@@ -272,17 +274,17 @@ public class Conveyor extends Block implements Autotiler{
                 ys[i] += maxmove;
 
                 if(ys[i] > nextMax) ys[i] = nextMax;
-                if(ys[i] > 0.5 && i > 0) mid = i - 1;
+                if(ys[i] >= 0.5f) mid = i;
                 xs[i] = Mathf.approach(xs[i], 0, moved*2);
 
-                if(ys[i] >= 1f && pass(ids[i])){
+                if(i == len - 1 && ys[i] >= 1f && pass(ids[i])){
                     //align X position if passing forwards
                     if(aligned){
                         nextc.xs[nextc.lastInserted] = xs[i];
                     }
                     //remove last item
-                    items.remove(ids[i], len - i);
-                    len = Math.min(i, len);
+                    items.remove(ids[i], 1);
+                    len = i;
                 }else if(ys[i] < minitem){
                     minitem = ys[i];
                 }
@@ -302,6 +304,32 @@ public class Conveyor extends Block implements Autotiler{
                 next.handleItem(this, item);
                 return true;
             }
+            
+            if(item != null){
+                Building l = left();
+                Building r = right();
+                
+                boolean leftAccepts = l != null && l.team == team && l.acceptItem(this, item);
+                boolean rightAccepts = r != null && r.team == team && r.acceptItem(this, item);
+                
+                if(leftAccepts && rightAccepts){
+                    if(passLeft){
+                        passLeft = false;
+                        l.handleItem(this, item);
+                    }else{
+                        passLeft = true;
+                        r.handleItem(this, item);
+                    }
+                    return true;
+                }else if(leftAccepts){
+                    l.handleItem(this, item);
+                    return true;
+                }else if(rightAccepts){
+                    r.handleItem(this, item);
+                    return true;
+                }
+            }
+            
             return false;
         }
 
@@ -462,7 +490,7 @@ public class Conveyor extends Block implements Autotiler{
         }
 
         public final void add(int o){
-            for(int i = Math.max(o + 1, len); i > o; i--){
+            for(int i = len; i > o; i--){
                 ids[i] = ids[i - 1];
                 xs[i] = xs[i - 1];
                 ys[i] = ys[i - 1];
