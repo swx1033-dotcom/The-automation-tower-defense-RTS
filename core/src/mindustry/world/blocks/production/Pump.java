@@ -15,10 +15,8 @@ import mindustry.world.meta.*;
 
 import static mindustry.Vars.*;
 
-public class Pump extends LiquidBlock{
-    /** Pump amount per tile. */
+public class Pump extends ProductionBlock{
     public float pumpAmount = 0.2f;
-    /** Interval in-between item consumptions, if applicable. */
     public float consumeTime = 60f * 5f;
     public float warmupSpeed = 0.019f;
     public DrawBlock drawer = new DrawMulti(new DrawDefault(), new DrawPumpLiquid());
@@ -99,7 +97,6 @@ public class Pump extends LiquidBlock{
     public void setBars(){
         super.setBars();
 
-        //replace dynamic output bar with own custom bar
         addLiquidBar((PumpBuild build) -> build.liquidDrop);
     }
 
@@ -107,7 +104,7 @@ public class Pump extends LiquidBlock{
         return tile != null && tile.floor().liquidDrop != null;
     }
 
-    public class PumpBuild extends LiquidBuild{
+    public class PumpBuild extends ProductionBuild{
         public float warmup, totalProgress;
         public float consTimer;
         public float amount = 0f;
@@ -151,18 +148,42 @@ public class Pump extends LiquidBlock{
             }
         }
 
+        public boolean checkOutputFull(){
+            return liquidDrop != null && liquids.get(liquidDrop) >= liquidCapacity - 0.01f;
+        }
+
+        @Override
+        public AutoShutdownReason calculateAutoShutdownReason(){
+            if(checkOutputFull()){
+                return AutoShutdownReason.outputFull;
+            }
+            if(liquidDrop == null){
+                return AutoShutdownReason.noInput;
+            }
+            return AutoShutdownReason.none;
+        }
+
         @Override
         public boolean shouldConsume(){
-            return liquidDrop != null && liquids.get(liquidDrop) < liquidCapacity - 0.01f && enabled;
+            if(!enabled) return false;
+
+            if(!autoMode) return liquidDrop != null && enabled;
+
+            if(checkOutputFull()){
+                return false;
+            }
+
+            return liquidDrop != null;
         }
 
         @Override
         public void updateTile(){
-            if(efficiency > 0 && liquidDrop != null){
+            checkAutoShutdown();
+
+            if(efficiency > 0 && liquidDrop != null && !isAutoShutdown()){
                 float maxPump = Math.min(liquidCapacity - liquids.get(liquidDrop), amount * pumpAmount * edelta());
                 liquids.add(liquidDrop, maxPump);
 
-                //does nothing for most pumps, as those do not require items.
                 if((consTimer += delta()) >= consumeTime){
                     consume();
                     consTimer %= 1f;
@@ -173,7 +194,7 @@ public class Pump extends LiquidBlock{
                 warmup = Mathf.approachDelta(warmup, 0f, warmupSpeed);
             }
 
-            totalProgress += warmup * Time.delta;
+            totalProgress += warmup * delta();
 
             if(liquidDrop != null){
                 dumpLiquid(liquidDrop);

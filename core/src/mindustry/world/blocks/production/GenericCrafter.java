@@ -1,11 +1,12 @@
 package mindustry.world.blocks.production;
 
+import arc.*;
+import arc.graphics.*;
 import arc.graphics.g2d.*;
-import arc.math.*;
-import arc.math.geom.*;
-import arc.struct.*;
+import arc.scene.ui.layout.*;
 import arc.util.*;
 import arc.util.io.*;
+import mindustry.annotations.Annotations.*;
 import mindustry.content.*;
 import mindustry.entities.*;
 import mindustry.entities.units.*;
@@ -20,20 +21,14 @@ import mindustry.world.meta.*;
 
 import static mindustry.Vars.*;
 
-public class GenericCrafter extends Block{
-    /** Written to outputItems as a single-element array if outputItems is null. */
+public class GenericCrafter extends ProductionBlock{
     public @Nullable ItemStack outputItem;
-    /** Overwrites outputItem if not null. */
     public @Nullable ItemStack[] outputItems;
 
-    /** Written to outputLiquids as a single-element array if outputLiquids is null. */
     public @Nullable LiquidStack outputLiquid;
-    /** Overwrites outputLiquid if not null. */
     public @Nullable LiquidStack[] outputLiquids;
-    /** Liquid output directions, specified in the same order as outputLiquids. Use -1 to dump in every direction. Rotations are relative to block. */
     public int[] liquidOutputDirections = {-1};
 
-    /** if true, crafters with multiple liquid outputs will dump excess when there's still space for at least one liquid type */
     public boolean dumpExtraLiquid = true;
     public boolean ignoreLiquidFullness = false;
 
@@ -43,7 +38,6 @@ public class GenericCrafter extends Block{
     public float updateEffectChance = 0.04f;
     public float updateEffectSpread = 4f;
     public float warmupSpeed = 0.019f;
-    /** Only used for legacy cultivator blocks. */
     @NoPatch
     public boolean legacyReadWarmup = false;
 
@@ -55,7 +49,6 @@ public class GenericCrafter extends Block{
         solid = true;
         hasItems = true;
         ambientSound = Sounds.loopMachine;
-        sync = true;
         ambientSoundVolume = 0.03f;
         flags = EnumSet.of(BlockFlag.factory);
         drawArrow = false;
@@ -82,12 +75,9 @@ public class GenericCrafter extends Block{
     public void setBars(){
         super.setBars();
 
-        //set up liquid bars for liquid outputs
         if(outputLiquids != null && outputLiquids.length > 0){
-            //no need for dynamic liquid bar
             removeBar("liquid");
 
-            //then display output buffer
             for(var stack : outputLiquids){
                 addLiquidBar(stack.liquid);
             }
@@ -123,7 +113,6 @@ public class GenericCrafter extends Block{
         if(outputLiquids == null && outputLiquid != null){
             outputLiquids = new LiquidStack[]{outputLiquid};
         }
-        //write back to outputLiquid, as it helps with sensing
         if(outputLiquid == null && outputLiquids != null && outputLiquids.length > 0){
             outputLiquid = outputLiquids[0];
         }
@@ -183,7 +172,7 @@ public class GenericCrafter extends Block{
         }
     }
 
-    public class GenericCrafterBuild extends Building{
+    public class GenericCrafterBuild extends ProductionBuild{
         public float progress;
         public float totalProgress;
         public float warmup;
@@ -199,12 +188,11 @@ public class GenericCrafter extends Block{
             drawer.drawLight(this);
         }
 
-        @Override
-        public boolean shouldConsume(){
+        public boolean checkOutputFull(){
             if(outputItems != null){
                 for(var output : outputItems){
                     if(items.get(output.item) + output.amount > itemCapacity){
-                        return false;
+                        return true;
                     }
                 }
             }
@@ -214,31 +202,50 @@ public class GenericCrafter extends Block{
                 for(var output : outputLiquids){
                     if(liquids.get(output.liquid) >= liquidCapacity - 0.001f){
                         if(!dumpExtraLiquid){
-                            return false;
+                            return true;
                         }
                     }else{
-                        //if there's still space left, it's not full for all liquids
                         allFull = false;
                     }
                 }
 
-                //if there is no space left for any liquid, it can't reproduce
                 if(allFull){
-                    return false;
+                    return true;
                 }
             }
+            return false;
+        }
 
-            return enabled;
+        @Override
+        public AutoShutdownReason calculateAutoShutdownReason(){
+            if(checkOutputFull()){
+                return AutoShutdownReason.outputFull;
+            }
+            return AutoShutdownReason.none;
+        }
+
+        @Override
+        public boolean shouldConsume(){
+            if(!enabled) return false;
+
+            if(!autoMode) return true;
+
+            if(checkOutputFull()){
+                return false;
+            }
+
+            return true;
         }
 
         @Override
         public void updateTile(){
-            if(efficiency > 0){
+            checkAutoShutdown();
+
+            if(efficiency > 0 && !isAutoShutdown()){
 
                 progress += getProgressIncrease(craftTime);
                 warmup = Mathf.approachDelta(warmup, warmupTarget(), warmupSpeed);
 
-                //continuously output based on efficiency
                 if(outputLiquids != null){
                     float inc = getProgressIncrease(1f);
                     for(var output : outputLiquids){
@@ -253,7 +260,6 @@ public class GenericCrafter extends Block{
                 warmup = Mathf.approachDelta(warmup, 0f, warmupSpeed);
             }
 
-            //TODO may look bad, revert to edelta() if so
             totalProgress += warmup * Time.delta;
 
             if(progress >= 1f){
@@ -269,7 +275,6 @@ public class GenericCrafter extends Block{
                 return super.getProgressIncrease(baseTime);
             }
 
-            //limit progress increase by maximum amount of liquid it can produce
             float scaling = 1f, max = 1f;
             if(outputLiquids != null){
                 max = 0f;
@@ -280,7 +285,6 @@ public class GenericCrafter extends Block{
                 }
             }
 
-            //when dumping excess take the maximum value instead of the minimum.
             return super.getProgressIncrease(baseTime) * (dumpExtraLiquid ? Math.min(max, 1f) : scaling);
         }
 
@@ -334,7 +338,6 @@ public class GenericCrafter extends Block{
         @Override
         public double sense(LAccess sensor){
             if(sensor == LAccess.progress) return progress();
-            //attempt to prevent wild total liquid fluctuation, at least for crafters
             if(sensor == LAccess.totalLiquids && outputLiquid != null) return liquids.get(outputLiquid.liquid);
             return super.sense(sensor);
         }

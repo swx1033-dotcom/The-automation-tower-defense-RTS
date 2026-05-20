@@ -15,16 +15,12 @@ import mindustry.ui.*;
 import mindustry.world.*;
 import mindustry.world.meta.*;
 
-/**
- * Pump that makes liquid from solids and takes in power. Only works on solid floor blocks.
- */
 public class SolidPump extends Pump{
     public Liquid result = Liquids.water;
     public Effect updateEffect = Fx.none;
     public float updateEffectChance = 0.02f;
     public float rotateSpeed = 1f;
     public float baseEfficiency = 1f;
-    /** Attribute that is checked when calculating output. */
     public @Nullable Attribute attribute;
 
     public @Load("@-rotator") TextureRegion rotatorRegion;
@@ -32,7 +28,6 @@ public class SolidPump extends Pump{
     public SolidPump(String name){
         super(name);
         hasPower = true;
-        //only supports ground by default
         envEnabled = Env.terrestrial;
     }
 
@@ -114,16 +109,37 @@ public class SolidPump extends Pump{
         }
 
         @Override
+        public AutoShutdownReason calculateAutoShutdownReason(){
+            if(typeLiquid() >= liquidCapacity - 0.01f){
+                return AutoShutdownReason.outputFull;
+            }
+            if(validTiles <= 0 && boost <= 0){
+                return AutoShutdownReason.noInput;
+            }
+            return AutoShutdownReason.none;
+        }
+
+        @Override
         public boolean shouldConsume(){
-            return liquids.get(result) < liquidCapacity - 0.01f;
+            if(!enabled) return false;
+
+            if(!autoMode) return true;
+
+            if(typeLiquid() >= liquidCapacity - 0.01f){
+                return false;
+            }
+
+            return validTiles > 0 || boost > 0;
         }
 
         @Override
         public void updateTile(){
+            checkAutoShutdown();
+
             liquidDrop = result;
             float fraction = Math.max(validTiles + boost + (attribute == null ? 0 : attribute.env()), 0);
 
-            if(efficiency > 0 && typeLiquid() < liquidCapacity - 0.001f){
+            if(efficiency > 0 && typeLiquid() < liquidCapacity - 0.001f && !isAutoShutdown()){
                 float maxPump = Math.min(liquidCapacity - typeLiquid(), pumpAmount * delta() * fraction * efficiency);
                 liquids.add(result, maxPump);
                 lastPump = maxPump / Time.delta;

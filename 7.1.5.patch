@@ -1,0 +1,618 @@
+diff --git a/core/src/mindustry/world/blocks/production/Drill.java b/core/src/mindustry/world/blocks/production/Drill.java
+index cc123b120a..6aab54e928 100644
+--- a/core/src/mindustry/world/blocks/production/Drill.java
++++ b/core/src/mindustry/world/blocks/production/Drill.java
+@@ -24,45 +24,30 @@ import mindustry.world.meta.*;
+ 
+ import static mindustry.Vars.*;
+ 
+-public class Drill extends Block{
++public class Drill extends ProductionBlock{
+     public float hardnessDrillMultiplier = 50f;
+ 
+     protected final ObjectIntMap<Item> oreCount = new ObjectIntMap<>();
+     protected final Seq<Item> itemArray = new Seq<>();
+ 
+-    /** Maximum tier of blocks this drill can mine. */
+     public int tier;
+-    /** Base time to drill one ore, in frames. */
+     public float drillTime = 300;
+-    /** How many times faster the drill will progress when boosted by liquid. */
+     public float liquidBoostIntensity = 1.6f;
+-    /** Speed at which the drill speeds up. */
+     public float warmupSpeed = 0.015f;
+-    /** Special exemption item that this drill can't mine. */
+     public @Nullable Item blockedItem;
+-    /** Special exemption items that this drill can't mine. */
+     public @Nullable Seq<Item> blockedItems;
+ 
+-    //return variables for countOre
+     protected @Nullable Item returnItem;
+     protected int returnCount;
+ 
+-    /** Whether to draw the item this drill is mining. */
+     public boolean drawMineItem = true;
+-    /** Effect played when an item is produced. This is colored. */
+     public Effect drillEffect = Fx.mine;
+-    /** Drill effect randomness. Block size by default. */
+     public float drillEffectRnd = -1f;
+-    /** Chance of displaying the effect. Useful for extremely fast drills. */
+     public float drillEffectChance = 0.02f;
+-    /** Speed the drill bit rotates at. */
+     public float rotateSpeed = 2f;
+-    /** Effect randomly played while drilling. */
+     public Effect updateEffect = Fx.pulverizeSmall;
+-    /** Chance the update effect will appear. */
+     public float updateEffectChance = 0.02f;
+ 
+-    /** Multipliers of drill speed for each item. Defaults to 1. */
+     public ObjectFloatMap<Item> drillMultipliers = new ObjectFloatMap<>();
+ 
+     public boolean drawRim = false;
+@@ -82,7 +67,6 @@ public class Drill extends Block{
+         hasItems = true;
+         ambientSound = Sounds.loopDrill;
+         ambientSoundVolume = 0.019f;
+-        //drills work in space I guess
+         envEnabled |= Env.space;
+         flags = EnumSet.of(BlockFlag.drill);
+     }
+@@ -234,7 +218,7 @@ public class Drill extends Block{
+         return drops != null && drops.hardness <= tier && (blockedItems == null || !blockedItems.contains(drops));
+     }
+ 
+-    public class DrillBuild extends Building{
++    public class DrillBuild extends ProductionBuild{
+         public float progress;
+         public float warmup;
+         public float timeDrilled;
+@@ -243,9 +227,34 @@ public class Drill extends Block{
+         public int dominantItems;
+         public Item dominantItem;
+ 
++        public boolean checkOutputFull(){
++            return items.total() >= itemCapacity;
++        }
++
++        @Override
++        public AutoShutdownReason calculateAutoShutdownReason(){
++            if(dominantItem == null){
++                return AutoShutdownReason.noInput;
++            }
++            if(checkOutputFull()){
++                return AutoShutdownReason.outputFull;
++            }
++            return AutoShutdownReason.none;
++        }
++
+         @Override
+         public boolean shouldConsume(){
+-            return items.total() < itemCapacity && enabled && dominantItem != null;
++            if(!enabled) return false;
++
++            if(!autoMode){
++                return items.total() < itemCapacity && dominantItem != null;
++            }
++
++            if(checkOutputFull()){
++                return false;
++            }
++
++            return dominantItem != null;
+         }
+ 
+         @Override
+@@ -285,11 +294,15 @@ public class Drill extends Block{
+ 
+         @Override
+         public void updateTile(){
++            checkAutoShutdown();
++
+             if(timer(timerDump, dumpTime / timeScale)){
+                 dump(dominantItem != null && items.has(dominantItem) ? dominantItem : null);
+             }
+ 
+-            if(dominantItem == null){
++            if(dominantItem == null || isAutoShutdown()){
++                lastDrillSpeed = 0f;
++                warmup = Mathf.approachDelta(warmup, 0f, warmupSpeed);
+                 return;
+             }
+ 
+@@ -398,4 +411,4 @@ public class Drill extends Block{
+         }
+     }
+ 
+-}
++}
+\ No newline at end of file
+diff --git a/core/src/mindustry/world/blocks/production/GenericCrafter.java b/core/src/mindustry/world/blocks/production/GenericCrafter.java
+index 0fc1ef457b..059f7e06cc 100644
+--- a/core/src/mindustry/world/blocks/production/GenericCrafter.java
++++ b/core/src/mindustry/world/blocks/production/GenericCrafter.java
+@@ -1,11 +1,12 @@
+ package mindustry.world.blocks.production;
+ 
++import arc.*;
++import arc.graphics.*;
+ import arc.graphics.g2d.*;
+-import arc.math.*;
+-import arc.math.geom.*;
+-import arc.struct.*;
++import arc.scene.ui.layout.*;
+ import arc.util.*;
+ import arc.util.io.*;
++import mindustry.annotations.Annotations.*;
+ import mindustry.content.*;
+ import mindustry.entities.*;
+ import mindustry.entities.units.*;
+@@ -20,20 +21,14 @@ import mindustry.world.meta.*;
+ 
+ import static mindustry.Vars.*;
+ 
+-public class GenericCrafter extends Block{
+-    /** Written to outputItems as a single-element array if outputItems is null. */
++public class GenericCrafter extends ProductionBlock{
+     public @Nullable ItemStack outputItem;
+-    /** Overwrites outputItem if not null. */
+     public @Nullable ItemStack[] outputItems;
+ 
+-    /** Written to outputLiquids as a single-element array if outputLiquids is null. */
+     public @Nullable LiquidStack outputLiquid;
+-    /** Overwrites outputLiquid if not null. */
+     public @Nullable LiquidStack[] outputLiquids;
+-    /** Liquid output directions, specified in the same order as outputLiquids. Use -1 to dump in every direction. Rotations are relative to block. */
+     public int[] liquidOutputDirections = {-1};
+ 
+-    /** if true, crafters with multiple liquid outputs will dump excess when there's still space for at least one liquid type */
+     public boolean dumpExtraLiquid = true;
+     public boolean ignoreLiquidFullness = false;
+ 
+@@ -43,7 +38,6 @@ public class GenericCrafter extends Block{
+     public float updateEffectChance = 0.04f;
+     public float updateEffectSpread = 4f;
+     public float warmupSpeed = 0.019f;
+-    /** Only used for legacy cultivator blocks. */
+     @NoPatch
+     public boolean legacyReadWarmup = false;
+ 
+@@ -55,7 +49,6 @@ public class GenericCrafter extends Block{
+         solid = true;
+         hasItems = true;
+         ambientSound = Sounds.loopMachine;
+-        sync = true;
+         ambientSoundVolume = 0.03f;
+         flags = EnumSet.of(BlockFlag.factory);
+         drawArrow = false;
+@@ -82,12 +75,9 @@ public class GenericCrafter extends Block{
+     public void setBars(){
+         super.setBars();
+ 
+-        //set up liquid bars for liquid outputs
+         if(outputLiquids != null && outputLiquids.length > 0){
+-            //no need for dynamic liquid bar
+             removeBar("liquid");
+ 
+-            //then display output buffer
+             for(var stack : outputLiquids){
+                 addLiquidBar(stack.liquid);
+             }
+@@ -123,7 +113,6 @@ public class GenericCrafter extends Block{
+         if(outputLiquids == null && outputLiquid != null){
+             outputLiquids = new LiquidStack[]{outputLiquid};
+         }
+-        //write back to outputLiquid, as it helps with sensing
+         if(outputLiquid == null && outputLiquids != null && outputLiquids.length > 0){
+             outputLiquid = outputLiquids[0];
+         }
+@@ -183,7 +172,7 @@ public class GenericCrafter extends Block{
+         }
+     }
+ 
+-    public class GenericCrafterBuild extends Building{
++    public class GenericCrafterBuild extends ProductionBuild{
+         public float progress;
+         public float totalProgress;
+         public float warmup;
+@@ -199,12 +188,11 @@ public class GenericCrafter extends Block{
+             drawer.drawLight(this);
+         }
+ 
+-        @Override
+-        public boolean shouldConsume(){
++        public boolean checkOutputFull(){
+             if(outputItems != null){
+                 for(var output : outputItems){
+                     if(items.get(output.item) + output.amount > itemCapacity){
+-                        return false;
++                        return true;
+                     }
+                 }
+             }
+@@ -214,31 +202,50 @@ public class GenericCrafter extends Block{
+                 for(var output : outputLiquids){
+                     if(liquids.get(output.liquid) >= liquidCapacity - 0.001f){
+                         if(!dumpExtraLiquid){
+-                            return false;
++                            return true;
+                         }
+                     }else{
+-                        //if there's still space left, it's not full for all liquids
+                         allFull = false;
+                     }
+                 }
+ 
+-                //if there is no space left for any liquid, it can't reproduce
+                 if(allFull){
+-                    return false;
++                    return true;
+                 }
+             }
++            return false;
++        }
++
++        @Override
++        public AutoShutdownReason calculateAutoShutdownReason(){
++            if(checkOutputFull()){
++                return AutoShutdownReason.outputFull;
++            }
++            return AutoShutdownReason.none;
++        }
++
++        @Override
++        public boolean shouldConsume(){
++            if(!enabled) return false;
++
++            if(!autoMode) return true;
++
++            if(checkOutputFull()){
++                return false;
++            }
+ 
+-            return enabled;
++            return true;
+         }
+ 
+         @Override
+         public void updateTile(){
+-            if(efficiency > 0){
++            checkAutoShutdown();
++
++            if(efficiency > 0 && !isAutoShutdown()){
+ 
+                 progress += getProgressIncrease(craftTime);
+                 warmup = Mathf.approachDelta(warmup, warmupTarget(), warmupSpeed);
+ 
+-                //continuously output based on efficiency
+                 if(outputLiquids != null){
+                     float inc = getProgressIncrease(1f);
+                     for(var output : outputLiquids){
+@@ -253,7 +260,6 @@ public class GenericCrafter extends Block{
+                 warmup = Mathf.approachDelta(warmup, 0f, warmupSpeed);
+             }
+ 
+-            //TODO may look bad, revert to edelta() if so
+             totalProgress += warmup * Time.delta;
+ 
+             if(progress >= 1f){
+@@ -269,7 +275,6 @@ public class GenericCrafter extends Block{
+                 return super.getProgressIncrease(baseTime);
+             }
+ 
+-            //limit progress increase by maximum amount of liquid it can produce
+             float scaling = 1f, max = 1f;
+             if(outputLiquids != null){
+                 max = 0f;
+@@ -280,7 +285,6 @@ public class GenericCrafter extends Block{
+                 }
+             }
+ 
+-            //when dumping excess take the maximum value instead of the minimum.
+             return super.getProgressIncrease(baseTime) * (dumpExtraLiquid ? Math.min(max, 1f) : scaling);
+         }
+ 
+@@ -334,7 +338,6 @@ public class GenericCrafter extends Block{
+         @Override
+         public double sense(LAccess sensor){
+             if(sensor == LAccess.progress) return progress();
+-            //attempt to prevent wild total liquid fluctuation, at least for crafters
+             if(sensor == LAccess.totalLiquids && outputLiquid != null) return liquids.get(outputLiquid.liquid);
+             return super.sense(sensor);
+         }
+@@ -370,4 +373,4 @@ public class GenericCrafter extends Block{
+             if(legacyReadWarmup) read.f();
+         }
+     }
+-}
++}
+\ No newline at end of file
+diff --git a/core/src/mindustry/world/blocks/production/Pump.java b/core/src/mindustry/world/blocks/production/Pump.java
+index 7cb9a7877e..abae07f5df 100644
+--- a/core/src/mindustry/world/blocks/production/Pump.java
++++ b/core/src/mindustry/world/blocks/production/Pump.java
+@@ -15,10 +15,8 @@ import mindustry.world.meta.*;
+ 
+ import static mindustry.Vars.*;
+ 
+-public class Pump extends LiquidBlock{
+-    /** Pump amount per tile. */
++public class Pump extends ProductionBlock{
+     public float pumpAmount = 0.2f;
+-    /** Interval in-between item consumptions, if applicable. */
+     public float consumeTime = 60f * 5f;
+     public float warmupSpeed = 0.019f;
+     public DrawBlock drawer = new DrawMulti(new DrawDefault(), new DrawPumpLiquid());
+@@ -99,7 +97,6 @@ public class Pump extends LiquidBlock{
+     public void setBars(){
+         super.setBars();
+ 
+-        //replace dynamic output bar with own custom bar
+         addLiquidBar((PumpBuild build) -> build.liquidDrop);
+     }
+ 
+@@ -107,7 +104,7 @@ public class Pump extends LiquidBlock{
+         return tile != null && tile.floor().liquidDrop != null;
+     }
+ 
+-    public class PumpBuild extends LiquidBuild{
++    public class PumpBuild extends ProductionBuild{
+         public float warmup, totalProgress;
+         public float consTimer;
+         public float amount = 0f;
+@@ -151,18 +148,42 @@ public class Pump extends LiquidBlock{
+             }
+         }
+ 
++        public boolean checkOutputFull(){
++            return liquidDrop != null && liquids.get(liquidDrop) >= liquidCapacity - 0.01f;
++        }
++
++        @Override
++        public AutoShutdownReason calculateAutoShutdownReason(){
++            if(checkOutputFull()){
++                return AutoShutdownReason.outputFull;
++            }
++            if(liquidDrop == null){
++                return AutoShutdownReason.noInput;
++            }
++            return AutoShutdownReason.none;
++        }
++
+         @Override
+         public boolean shouldConsume(){
+-            return liquidDrop != null && liquids.get(liquidDrop) < liquidCapacity - 0.01f && enabled;
++            if(!enabled) return false;
++
++            if(!autoMode) return liquidDrop != null && enabled;
++
++            if(checkOutputFull()){
++                return false;
++            }
++
++            return liquidDrop != null;
+         }
+ 
+         @Override
+         public void updateTile(){
+-            if(efficiency > 0 && liquidDrop != null){
++            checkAutoShutdown();
++
++            if(efficiency > 0 && liquidDrop != null && !isAutoShutdown()){
+                 float maxPump = Math.min(liquidCapacity - liquids.get(liquidDrop), amount * pumpAmount * edelta());
+                 liquids.add(liquidDrop, maxPump);
+ 
+-                //does nothing for most pumps, as those do not require items.
+                 if((consTimer += delta()) >= consumeTime){
+                     consume();
+                     consTimer %= 1f;
+@@ -173,7 +194,7 @@ public class Pump extends LiquidBlock{
+                 warmup = Mathf.approachDelta(warmup, 0f, warmupSpeed);
+             }
+ 
+-            totalProgress += warmup * Time.delta;
++            totalProgress += warmup * delta();
+ 
+             if(liquidDrop != null){
+                 dumpLiquid(liquidDrop);
+@@ -195,4 +216,4 @@ public class Pump extends LiquidBlock{
+             return totalProgress;
+         }
+     }
+-}
++}
+\ No newline at end of file
+diff --git a/core/src/mindustry/world/blocks/production/Separator.java b/core/src/mindustry/world/blocks/production/Separator.java
+index 22ad5c94ab..b8a50d3e5c 100644
+--- a/core/src/mindustry/world/blocks/production/Separator.java
++++ b/core/src/mindustry/world/blocks/production/Separator.java
+@@ -13,10 +13,7 @@ import mindustry.world.consumers.*;
+ import mindustry.world.draw.*;
+ import mindustry.world.meta.*;
+ 
+-/**
+- * Extracts a random list of items from an input item and an input liquid.
+- */
+-public class Separator extends Block{
++public class Separator extends ProductionBlock{
+     protected @Nullable ConsumeItems consItems;
+ 
+     public ItemStack[] results;
+@@ -30,7 +27,6 @@ public class Separator extends Block{
+         solid = true;
+         hasItems = true;
+         hasLiquids = true;
+-        sync = true;
+     }
+ 
+     @Override
+@@ -72,7 +68,7 @@ public class Separator extends Block{
+         return drawer.finalIcons(this);
+     }
+ 
+-    public class SeparatorBuild extends Building{
++    public class SeparatorBuild extends ProductionBuild{
+         public float progress;
+         public float totalProgress;
+         public float warmup;
+@@ -88,16 +84,50 @@ public class Separator extends Block{
+             return efficiency > 0;
+         }
+ 
++        public boolean checkOutputFull(){
++            return items.total() >= itemCapacity;
++        }
++
++        public boolean checkNoInput(){
++            if(consItems == null) return false;
++            for(ItemStack stack : consItems.items){
++                if(!items.has(stack.item, stack.amount)){
++                    return true;
++                }
++            }
++            return false;
++        }
++
++        @Override
++        public AutoShutdownReason calculateAutoShutdownReason(){
++            if(checkOutputFull()){
++                return AutoShutdownReason.outputFull;
++            }
++            if(checkNoInput()){
++                return AutoShutdownReason.noInput;
++            }
++            return AutoShutdownReason.none;
++        }
++
+         @Override
+         public boolean shouldConsume(){
+-            int total = items.total();
+-            //very inefficient way of allowing separators to ignore input buffer storage
+-            if(consItems != null){
+-                for(ItemStack stack : consItems.items){
+-                    total -= items.get(stack.item);
++            if(!enabled) return false;
++
++            if(!autoMode){
++                int total = items.total();
++                if(consItems != null){
++                    for(ItemStack stack : consItems.items){
++                        total -= items.get(stack.item);
++                    }
+                 }
++                return total < itemCapacity;
+             }
+-            return total < itemCapacity && enabled;
++
++            if(checkOutputFull()){
++                return false;
++            }
++
++            return !checkNoInput();
+         }
+ 
+         @Override
+@@ -128,9 +158,11 @@ public class Separator extends Block{
+ 
+         @Override
+         public void updateTile(){
++            checkAutoShutdown();
++
+             totalProgress += warmup * delta();
+ 
+-            if(efficiency > 0){
++            if(efficiency > 0 && !isAutoShutdown()){
+                 progress += getProgressIncrease(craftTime);
+                 warmup = Mathf.lerpDelta(warmup, 1f, 0.02f);
+             }else{
+@@ -146,7 +178,6 @@ public class Separator extends Block{
+                 int count = 0;
+                 Item item = null;
+ 
+-                //guaranteed desync since items are random - won't be fixed and probably isn't too important
+                 for(ItemStack stack : results){
+                     if(i >= count && i < count + stack.amount){
+                         item = stack.item;
+@@ -199,4 +230,4 @@ public class Separator extends Block{
+             if(revision == 1) seed = read.i();
+         }
+     }
+-}
++}
+\ No newline at end of file
+diff --git a/core/src/mindustry/world/blocks/production/SolidPump.java b/core/src/mindustry/world/blocks/production/SolidPump.java
+index 064033c422..72a524911e 100644
+--- a/core/src/mindustry/world/blocks/production/SolidPump.java
++++ b/core/src/mindustry/world/blocks/production/SolidPump.java
+@@ -15,16 +15,12 @@ import mindustry.ui.*;
+ import mindustry.world.*;
+ import mindustry.world.meta.*;
+ 
+-/**
+- * Pump that makes liquid from solids and takes in power. Only works on solid floor blocks.
+- */
+ public class SolidPump extends Pump{
+     public Liquid result = Liquids.water;
+     public Effect updateEffect = Fx.none;
+     public float updateEffectChance = 0.02f;
+     public float rotateSpeed = 1f;
+     public float baseEfficiency = 1f;
+-    /** Attribute that is checked when calculating output. */
+     public @Nullable Attribute attribute;
+ 
+     public @Load("@-rotator") TextureRegion rotatorRegion;
+@@ -32,7 +28,6 @@ public class SolidPump extends Pump{
+     public SolidPump(String name){
+         super(name);
+         hasPower = true;
+-        //only supports ground by default
+         envEnabled = Env.terrestrial;
+     }
+ 
+@@ -113,17 +108,38 @@ public class SolidPump extends Pump{
+             Draw.rect(topRegion, x, y);
+         }
+ 
++        @Override
++        public AutoShutdownReason calculateAutoShutdownReason(){
++            if(typeLiquid() >= liquidCapacity - 0.01f){
++                return AutoShutdownReason.outputFull;
++            }
++            if(validTiles <= 0 && boost <= 0){
++                return AutoShutdownReason.noInput;
++            }
++            return AutoShutdownReason.none;
++        }
++
+         @Override
+         public boolean shouldConsume(){
+-            return liquids.get(result) < liquidCapacity - 0.01f;
++            if(!enabled) return false;
++
++            if(!autoMode) return true;
++
++            if(typeLiquid() >= liquidCapacity - 0.01f){
++                return false;
++            }
++
++            return validTiles > 0 || boost > 0;
+         }
+ 
+         @Override
+         public void updateTile(){
++            checkAutoShutdown();
++
+             liquidDrop = result;
+             float fraction = Math.max(validTiles + boost + (attribute == null ? 0 : attribute.env()), 0);
+ 
+-            if(efficiency > 0 && typeLiquid() < liquidCapacity - 0.001f){
++            if(efficiency > 0 && typeLiquid() < liquidCapacity - 0.001f && !isAutoShutdown()){
+                 float maxPump = Math.min(liquidCapacity - typeLiquid(), pumpAmount * delta() * fraction * efficiency);
+                 liquids.add(result, maxPump);
+                 lastPump = maxPump / Time.delta;
+@@ -163,4 +179,4 @@ public class SolidPump extends Pump{
+             return liquids.get(result);
+         }
+     }
+-}
++}
+\ No newline at end of file

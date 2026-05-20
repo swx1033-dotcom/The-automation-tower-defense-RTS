@@ -13,10 +13,7 @@ import mindustry.world.consumers.*;
 import mindustry.world.draw.*;
 import mindustry.world.meta.*;
 
-/**
- * Extracts a random list of items from an input item and an input liquid.
- */
-public class Separator extends Block{
+public class Separator extends ProductionBlock{
     protected @Nullable ConsumeItems consItems;
 
     public ItemStack[] results;
@@ -30,7 +27,6 @@ public class Separator extends Block{
         solid = true;
         hasItems = true;
         hasLiquids = true;
-        sync = true;
     }
 
     @Override
@@ -72,7 +68,7 @@ public class Separator extends Block{
         return drawer.finalIcons(this);
     }
 
-    public class SeparatorBuild extends Building{
+    public class SeparatorBuild extends ProductionBuild{
         public float progress;
         public float totalProgress;
         public float warmup;
@@ -88,16 +84,50 @@ public class Separator extends Block{
             return efficiency > 0;
         }
 
-        @Override
-        public boolean shouldConsume(){
-            int total = items.total();
-            //very inefficient way of allowing separators to ignore input buffer storage
-            if(consItems != null){
-                for(ItemStack stack : consItems.items){
-                    total -= items.get(stack.item);
+        public boolean checkOutputFull(){
+            return items.total() >= itemCapacity;
+        }
+
+        public boolean checkNoInput(){
+            if(consItems == null) return false;
+            for(ItemStack stack : consItems.items){
+                if(!items.has(stack.item, stack.amount)){
+                    return true;
                 }
             }
-            return total < itemCapacity && enabled;
+            return false;
+        }
+
+        @Override
+        public AutoShutdownReason calculateAutoShutdownReason(){
+            if(checkOutputFull()){
+                return AutoShutdownReason.outputFull;
+            }
+            if(checkNoInput()){
+                return AutoShutdownReason.noInput;
+            }
+            return AutoShutdownReason.none;
+        }
+
+        @Override
+        public boolean shouldConsume(){
+            if(!enabled) return false;
+
+            if(!autoMode){
+                int total = items.total();
+                if(consItems != null){
+                    for(ItemStack stack : consItems.items){
+                        total -= items.get(stack.item);
+                    }
+                }
+                return total < itemCapacity;
+            }
+
+            if(checkOutputFull()){
+                return false;
+            }
+
+            return !checkNoInput();
         }
 
         @Override
@@ -128,9 +158,11 @@ public class Separator extends Block{
 
         @Override
         public void updateTile(){
+            checkAutoShutdown();
+
             totalProgress += warmup * delta();
 
-            if(efficiency > 0){
+            if(efficiency > 0 && !isAutoShutdown()){
                 progress += getProgressIncrease(craftTime);
                 warmup = Mathf.lerpDelta(warmup, 1f, 0.02f);
             }else{
@@ -146,7 +178,6 @@ public class Separator extends Block{
                 int count = 0;
                 Item item = null;
 
-                //guaranteed desync since items are random - won't be fixed and probably isn't too important
                 for(ItemStack stack : results){
                     if(i >= count && i < count + stack.amount){
                         item = stack.item;
