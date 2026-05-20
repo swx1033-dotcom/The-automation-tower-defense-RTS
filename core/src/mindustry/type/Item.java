@@ -18,6 +18,36 @@ import static mindustry.Vars.*;
 public class Item extends UnlockableContent implements Senseable{
     public Color color;
 
+    /** 物品品质枚举 */
+    public enum Quality{
+        /** 普通品质 */
+        common(0, 1.0f, 1.0f),
+        /** 精良品质 */
+        fine(1, 1.2f, 1.15f),
+        /** 稀有品质 */
+        rare(2, 1.4f, 1.3f);
+
+        public final int tier;
+        public final float miningSpeedBonus;
+        public final float craftingBonus;
+
+        Quality(int tier, float miningSpeedBonus, float craftingBonus){
+            this.tier = tier;
+            this.miningSpeedBonus = miningSpeedBonus;
+            this.craftingBonus = craftingBonus;
+        }
+
+        /** 获取下一级品质，如果已是最高级则返回自身 */
+        public Quality next(){
+            return ordinal() < values().length - 1 ? values()[ordinal() + 1] : this;
+        }
+
+        /** 获取上一级品质，如果已是最低级则返回自身 */
+        public Quality prev(){
+            return ordinal() > 0 ? values()[ordinal() - 1] : this;
+        }
+    }
+
     /** how explosive this item is. */
     public float explosiveness = 0f;
     /** flammability above 0.3 makes this eligible for item burners. */
