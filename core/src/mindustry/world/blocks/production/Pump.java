@@ -15,7 +15,7 @@ import mindustry.world.meta.*;
 
 import static mindustry.Vars.*;
 
-public class Pump extends LiquidBlock{
+public class Pump extends ProductionBlock{
     /** Pump amount per tile. */
     public float pumpAmount = 0.2f;
     /** Interval in-between item consumptions, if applicable. */
@@ -25,6 +25,8 @@ public class Pump extends LiquidBlock{
 
     public Pump(String name){
         super(name);
+        hasLiquids = true;
+        outputsLiquid = true;
         group = BlockGroup.liquids;
         floating = true;
         envEnabled = Env.terrestrial;
@@ -107,7 +109,7 @@ public class Pump extends LiquidBlock{
         return tile != null && tile.floor().liquidDrop != null;
     }
 
-    public class PumpBuild extends LiquidBuild{
+    public class PumpBuild extends ProductionBlockBuild{
         public float warmup, totalProgress;
         public float consTimer;
         public float amount = 0f;
@@ -116,11 +118,11 @@ public class Pump extends LiquidBlock{
         @Override
         public void draw(){
             drawer.draw(this);
+            super.draw();
         }
 
         @Override
         public void drawLight(){
-            super.drawLight();
             drawer.drawLight(this);
         }
 
@@ -152,12 +154,19 @@ public class Pump extends LiquidBlock{
         }
 
         @Override
+        public boolean isProductFull(){
+            return liquidDrop != null && liquids.get(liquidDrop) >= liquidCapacity - 0.01f;
+        }
+
+        @Override
         public boolean shouldConsume(){
+            if(isStopped) return false;
             return liquidDrop != null && liquids.get(liquidDrop) < liquidCapacity - 0.01f && enabled;
         }
 
         @Override
         public void updateTile(){
+            super.updateTile();
             if(efficiency > 0 && liquidDrop != null){
                 float maxPump = Math.min(liquidCapacity - liquids.get(liquidDrop), amount * pumpAmount * edelta());
                 liquids.add(liquidDrop, maxPump);

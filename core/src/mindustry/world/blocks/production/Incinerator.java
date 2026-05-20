@@ -11,7 +11,7 @@ import mindustry.type.*;
 import mindustry.world.*;
 import mindustry.world.meta.*;
 
-public class Incinerator extends Block{
+public class Incinerator extends ProductionBlock{
     public Effect effect = Fx.fuelburn;
     public Color flameColor = Color.valueOf("ffad9d");
 
@@ -23,11 +23,12 @@ public class Incinerator extends Block{
         solid = true;
     }
 
-    public class IncineratorBuild extends Building{
+    public class IncineratorBuild extends ProductionBlockBuild{
         public float heat;
 
         @Override
         public void updateTile(){
+            super.updateTile();
             heat = Mathf.approachDelta(heat, efficiency, 0.04f);
         }
 
@@ -37,7 +38,7 @@ public class Incinerator extends Block{
         }
 
         @Override
-        public void draw(){
+        public void draw() {
             super.draw();
 
             if(heat > 0f){

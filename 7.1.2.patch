@@ -1,0 +1,360 @@
+diff --git a/core/src/mindustry/world/blocks/production/Drill.java b/core/src/mindustry/world/blocks/production/Drill.java
+index cc123b120a..1e0140692b 100644
+--- a/core/src/mindustry/world/blocks/production/Drill.java
++++ b/core/src/mindustry/world/blocks/production/Drill.java
+@@ -24,7 +24,7 @@ import mindustry.world.meta.*;
+ 
+ import static mindustry.Vars.*;
+ 
+-public class Drill extends Block{
++public class Drill extends ProductionBlock{
+     public float hardnessDrillMultiplier = 50f;
+ 
+     protected final ObjectIntMap<Item> oreCount = new ObjectIntMap<>();
+@@ -234,7 +234,7 @@ public class Drill extends Block{
+         return drops != null && drops.hardness <= tier && (blockedItems == null || !blockedItems.contains(drops));
+     }
+ 
+-    public class DrillBuild extends Building{
++    public class DrillBuild extends ProductionBlockBuild{
+         public float progress;
+         public float warmup;
+         public float timeDrilled;
+@@ -243,11 +243,22 @@ public class Drill extends Block{
+         public int dominantItems;
+         public Item dominantItem;
+ 
++      @Override
++        public boolean isProductFull(){
++            return items.total() >= itemCapacity;
++        }
++
+         @Override
+         public boolean shouldConsume(){
++            if(isStopped) return false;
+             return items.total() < itemCapacity && enabled && dominantItem != null;
+         }
+ 
++        @Override
++        public boolean isMaterialShort(){
++            return dominantItem == null;
++        }
++
+         @Override
+         public boolean shouldAmbientSound(){
+             return efficiency > 0.01f && items.total() < itemCapacity;
+@@ -285,6 +296,7 @@ public class Drill extends Block{
+ 
+         @Override
+         public void updateTile(){
++            super.updateTile();
+             if(timer(timerDump, dumpTime / timeScale)){
+                 dump(dominantItem != null && items.has(dominantItem) ? dominantItem : null);
+             }
+@@ -344,6 +356,7 @@ public class Drill extends Block{
+ 
+         @Override
+         public void draw(){
++            super.draw();
+             float s = 0.3f;
+             float ts = 0.6f;
+ 
+diff --git a/core/src/mindustry/world/blocks/production/GenericCrafter.java b/core/src/mindustry/world/blocks/production/GenericCrafter.java
+index 0fc1ef457b..c7e9d67ad5 100644
+--- a/core/src/mindustry/world/blocks/production/GenericCrafter.java
++++ b/core/src/mindustry/world/blocks/production/GenericCrafter.java
+@@ -20,7 +20,7 @@ import mindustry.world.meta.*;
+ 
+ import static mindustry.Vars.*;
+ 
+-public class GenericCrafter extends Block{
++public class GenericCrafter extends ProductionBlock{
+     /** Written to outputItems as a single-element array if outputItems is null. */
+     public @Nullable ItemStack outputItem;
+     /** Overwrites outputItem if not null. */
+@@ -183,7 +183,7 @@ public class GenericCrafter extends Block{
+         }
+     }
+ 
+-    public class GenericCrafterBuild extends Building{
++    public class GenericCrafterBuild extends ProductionBlockBuild{
+         public float progress;
+         public float totalProgress;
+         public float warmup;
+@@ -191,6 +191,7 @@ public class GenericCrafter extends Block{
+         @Override
+         public void draw(){
+             drawer.draw(this);
++            super.draw();
+         }
+ 
+         @Override
+@@ -200,39 +201,42 @@ public class GenericCrafter extends Block{
+         }
+ 
+         @Override
+-        public boolean shouldConsume(){
++        public boolean isProductFull(){
++            boolean allItemsFull = true;
+             if(outputItems != null){
+                 for(var output : outputItems){
+-                    if(items.get(output.item) + output.amount > itemCapacity){
+-                        return false;
++                    if(items.get(output.item) + output.amount <= itemCapacity){
++                        allItemsFull = false;
++                        break;
+                     }
+                 }
++            }else{
++                allItemsFull = false;
+             }
+ 
++            boolean allLiquidsFull = true;
+             if(outputLiquids != null && !ignoreLiquidFullness){
+-                boolean allFull = true;
+                 for(var output : outputLiquids){
+-                    if(liquids.get(output.liquid) >= liquidCapacity - 0.001f){
+-                        if(!dumpExtraLiquid){
+-                            return false;
+-                        }
+-                    }else{
+-                        //if there's still space left, it's not full for all liquids
+-                        allFull = false;
++                    if(liquids.get(output.liquid) < liquidCapacity - 0.001f){
++                        allLiquidsFull = false;
++                        break;
+                     }
+                 }
+-
+-                //if there is no space left for any liquid, it can't reproduce
+-                if(allFull){
+-                    return false;
+-                }
++            }else{
++                allLiquidsFull = false;
+             }
+ 
+-            return enabled;
++            if (outputItems != null && outputLiquids != null && !ignoreLiquidFullness) {
++                return allItemsFull && allLiquidsFull;
++            }
++            if (outputItems != null) return allItemsFull;
++            if (outputLiquids != null && !ignoreLiquidFullness) return allLiquidsFull;
++            return false;
+         }
+ 
+         @Override
+         public void updateTile(){
++            super.updateTile();
+             if(efficiency > 0){
+ 
+                 progress += getProgressIncrease(craftTime);
+diff --git a/core/src/mindustry/world/blocks/production/Incinerator.java b/core/src/mindustry/world/blocks/production/Incinerator.java
+index 445c509654..1ea4576135 100644
+--- a/core/src/mindustry/world/blocks/production/Incinerator.java
++++ b/core/src/mindustry/world/blocks/production/Incinerator.java
+@@ -11,7 +11,7 @@ import mindustry.type.*;
+ import mindustry.world.*;
+ import mindustry.world.meta.*;
+ 
+-public class Incinerator extends Block{
++public class Incinerator extends ProductionBlock{
+     public Effect effect = Fx.fuelburn;
+     public Color flameColor = Color.valueOf("ffad9d");
+ 
+@@ -23,11 +23,12 @@ public class Incinerator extends Block{
+         solid = true;
+     }
+ 
+-    public class IncineratorBuild extends Building{
++    public class IncineratorBuild extends ProductionBlockBuild{
+         public float heat;
+ 
+         @Override
+         public void updateTile(){
++            super.updateTile();
+             heat = Mathf.approachDelta(heat, efficiency, 0.04f);
+         }
+ 
+@@ -37,7 +38,7 @@ public class Incinerator extends Block{
+         }
+ 
+         @Override
+-        public void draw(){
++        public void draw() {
+             super.draw();
+ 
+             if(heat > 0f){
+diff --git a/core/src/mindustry/world/blocks/production/Pump.java b/core/src/mindustry/world/blocks/production/Pump.java
+index 7cb9a7877e..6e4a95baef 100644
+--- a/core/src/mindustry/world/blocks/production/Pump.java
++++ b/core/src/mindustry/world/blocks/production/Pump.java
+@@ -15,7 +15,7 @@ import mindustry.world.meta.*;
+ 
+ import static mindustry.Vars.*;
+ 
+-public class Pump extends LiquidBlock{
++public class Pump extends ProductionBlock{
+     /** Pump amount per tile. */
+     public float pumpAmount = 0.2f;
+     /** Interval in-between item consumptions, if applicable. */
+@@ -25,6 +25,8 @@ public class Pump extends LiquidBlock{
+ 
+     public Pump(String name){
+         super(name);
++        hasLiquids = true;
++        outputsLiquid = true;
+         group = BlockGroup.liquids;
+         floating = true;
+         envEnabled = Env.terrestrial;
+@@ -107,7 +109,7 @@ public class Pump extends LiquidBlock{
+         return tile != null && tile.floor().liquidDrop != null;
+     }
+ 
+-    public class PumpBuild extends LiquidBuild{
++    public class PumpBuild extends ProductionBlockBuild{
+         public float warmup, totalProgress;
+         public float consTimer;
+         public float amount = 0f;
+@@ -116,11 +118,11 @@ public class Pump extends LiquidBlock{
+         @Override
+         public void draw(){
+             drawer.draw(this);
++            super.draw();
+         }
+ 
+         @Override
+         public void drawLight(){
+-            super.drawLight();
+             drawer.drawLight(this);
+         }
+ 
+@@ -151,13 +153,20 @@ public class Pump extends LiquidBlock{
+             }
+         }
+ 
++        @Override
++        public boolean isProductFull(){
++            return liquidDrop != null && liquids.get(liquidDrop) >= liquidCapacity - 0.01f;
++        }
++
+         @Override
+         public boolean shouldConsume(){
++            if(isStopped) return false;
+             return liquidDrop != null && liquids.get(liquidDrop) < liquidCapacity - 0.01f && enabled;
+         }
+ 
+         @Override
+         public void updateTile(){
++            super.updateTile();
+             if(efficiency > 0 && liquidDrop != null){
+                 float maxPump = Math.min(liquidCapacity - liquids.get(liquidDrop), amount * pumpAmount * edelta());
+                 liquids.add(liquidDrop, maxPump);
+diff --git a/core/src/mindustry/world/blocks/production/Separator.java b/core/src/mindustry/world/blocks/production/Separator.java
+index 22ad5c94ab..a57113d4b5 100644
+--- a/core/src/mindustry/world/blocks/production/Separator.java
++++ b/core/src/mindustry/world/blocks/production/Separator.java
+@@ -16,7 +16,7 @@ import mindustry.world.meta.*;
+ /**
+  * Extracts a random list of items from an input item and an input liquid.
+  */
+-public class Separator extends Block{
++public class Separator extends ProductionBlock{
+     protected @Nullable ConsumeItems consItems;
+ 
+     public ItemStack[] results;
+@@ -72,7 +72,7 @@ public class Separator extends Block{
+         return drawer.finalIcons(this);
+     }
+ 
+-    public class SeparatorBuild extends Building{
++    public class SeparatorBuild extends ProductionBlockBuild{
+         public float progress;
+         public float totalProgress;
+         public float warmup;
+@@ -89,20 +89,20 @@ public class Separator extends Block{
+         }
+ 
+         @Override
+-        public boolean shouldConsume(){
++        public boolean isProductFull(){
+             int total = items.total();
+-            //very inefficient way of allowing separators to ignore input buffer storage
+             if(consItems != null){
+                 for(ItemStack stack : consItems.items){
+                     total -= items.get(stack.item);
+                 }
+             }
+-            return total < itemCapacity && enabled;
++            return total >= itemCapacity;
+         }
+ 
+         @Override
+         public void draw(){
+             drawer.draw(this);
++            super.draw();
+         }
+ 
+         @Override
+@@ -128,6 +128,7 @@ public class Separator extends Block{
+ 
+         @Override
+         public void updateTile(){
++            super.updateTile();
+             totalProgress += warmup * delta();
+ 
+             if(efficiency > 0){
+diff --git a/core/src/mindustry/world/blocks/production/SolidPump.java b/core/src/mindustry/world/blocks/production/SolidPump.java
+index 064033c422..6a1d347395 100644
+--- a/core/src/mindustry/world/blocks/production/SolidPump.java
++++ b/core/src/mindustry/world/blocks/production/SolidPump.java
+@@ -15,16 +15,12 @@ import mindustry.ui.*;
+ import mindustry.world.*;
+ import mindustry.world.meta.*;
+ 
+-/**
+- * Pump that makes liquid from solids and takes in power. Only works on solid floor blocks.
+- */
+ public class SolidPump extends Pump{
+     public Liquid result = Liquids.water;
+     public Effect updateEffect = Fx.none;
+     public float updateEffectChance = 0.02f;
+     public float rotateSpeed = 1f;
+     public float baseEfficiency = 1f;
+-    /** Attribute that is checked when calculating output. */
+     public @Nullable Attribute attribute;
+ 
+     public @Load("@-rotator") TextureRegion rotatorRegion;
+@@ -32,7 +28,6 @@ public class SolidPump extends Pump{
+     public SolidPump(String name){
+         super(name);
+         hasPower = true;
+-        //only supports ground by default
+         envEnabled = Env.terrestrial;
+     }
+ 
+@@ -115,11 +110,24 @@ public class SolidPump extends Pump{
+ 
+         @Override
+         public boolean shouldConsume(){
++            if(isStopped) return false;
+             return liquids.get(result) < liquidCapacity - 0.01f;
+         }
+ 
++        @Override
++        public boolean isProductFull(){
++            return liquids.get(result) >= liquidCapacity - 0.01f;
++        }
++
++        @Override
++        public boolean isMaterialShort(){
++            float fraction = Math.max(validTiles + boost + (attribute == null ? 0 : attribute.env()), 0f);
++            return fraction <= 0.0001f || !productionValid();
++        }
++
+         @Override
+         public void updateTile(){
++            super.updateTile();
+             liquidDrop = result;
+             float fraction = Math.max(validTiles + boost + (attribute == null ? 0 : attribute.env()), 0);
+ 

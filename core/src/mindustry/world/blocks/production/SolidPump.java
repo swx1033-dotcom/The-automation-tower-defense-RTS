@@ -15,16 +15,12 @@ import mindustry.ui.*;
 import mindustry.world.*;
 import mindustry.world.meta.*;
 
-/**
- * Pump that makes liquid from solids and takes in power. Only works on solid floor blocks.
- */
 public class SolidPump extends Pump{
     public Liquid result = Liquids.water;
     public Effect updateEffect = Fx.none;
     public float updateEffectChance = 0.02f;
     public float rotateSpeed = 1f;
     public float baseEfficiency = 1f;
-    /** Attribute that is checked when calculating output. */
     public @Nullable Attribute attribute;
 
     public @Load("@-rotator") TextureRegion rotatorRegion;
@@ -32,7 +28,6 @@ public class SolidPump extends Pump{
     public SolidPump(String name){
         super(name);
         hasPower = true;
-        //only supports ground by default
         envEnabled = Env.terrestrial;
     }
 
@@ -115,11 +110,24 @@ public class SolidPump extends Pump{
 
         @Override
         public boolean shouldConsume(){
+            if(isStopped) return false;
             return liquids.get(result) < liquidCapacity - 0.01f;
         }
 
         @Override
+        public boolean isProductFull(){
+            return liquids.get(result) >= liquidCapacity - 0.01f;
+        }
+
+        @Override
+        public boolean isMaterialShort(){
+            float fraction = Math.max(validTiles + boost + (attribute == null ? 0 : attribute.env()), 0f);
+            return fraction <= 0.0001f || !productionValid();
+        }
+
+        @Override
         public void updateTile(){
+            super.updateTile();
             liquidDrop = result;
             float fraction = Math.max(validTiles + boost + (attribute == null ? 0 : attribute.env()), 0);
 

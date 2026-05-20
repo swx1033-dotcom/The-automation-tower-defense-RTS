@@ -20,7 +20,7 @@ import mindustry.world.meta.*;
 
 import static mindustry.Vars.*;
 
-public class GenericCrafter extends Block{
+public class GenericCrafter extends ProductionBlock{
     /** Written to outputItems as a single-element array if outputItems is null. */
     public @Nullable ItemStack outputItem;
     /** Overwrites outputItem if not null. */
@@ -183,7 +183,7 @@ public class GenericCrafter extends Block{
         }
     }
 
-    public class GenericCrafterBuild extends Building{
+    public class GenericCrafterBuild extends ProductionBlockBuild{
         public float progress;
         public float totalProgress;
         public float warmup;
@@ -191,6 +191,7 @@ public class GenericCrafter extends Block{
         @Override
         public void draw(){
             drawer.draw(this);
+            super.draw();
         }
 
         @Override
@@ -200,39 +201,42 @@ public class GenericCrafter extends Block{
         }
 
         @Override
-        public boolean shouldConsume(){
+        public boolean isProductFull(){
+            boolean allItemsFull = true;
             if(outputItems != null){
                 for(var output : outputItems){
-                    if(items.get(output.item) + output.amount > itemCapacity){
-                        return false;
+                    if(items.get(output.item) + output.amount <= itemCapacity){
+                        allItemsFull = false;
+                        break;
                     }
                 }
+            }else{
+                allItemsFull = false;
             }
 
+            boolean allLiquidsFull = true;
             if(outputLiquids != null && !ignoreLiquidFullness){
-                boolean allFull = true;
                 for(var output : outputLiquids){
-                    if(liquids.get(output.liquid) >= liquidCapacity - 0.001f){
-                        if(!dumpExtraLiquid){
-                            return false;
-                        }
-                    }else{
-                        //if there's still space left, it's not full for all liquids
-                        allFull = false;
+                    if(liquids.get(output.liquid) < liquidCapacity - 0.001f){
+                        allLiquidsFull = false;
+                        break;
                     }
                 }
-
-                //if there is no space left for any liquid, it can't reproduce
-                if(allFull){
-                    return false;
-                }
+            }else{
+                allLiquidsFull = false;
             }
 
-            return enabled;
+            if (outputItems != null && outputLiquids != null && !ignoreLiquidFullness) {
+                return allItemsFull && allLiquidsFull;
+            }
+            if (outputItems != null) return allItemsFull;
+            if (outputLiquids != null && !ignoreLiquidFullness) return allLiquidsFull;
+            return false;
         }
 
         @Override
         public void updateTile(){
+            super.updateTile();
             if(efficiency > 0){
 
                 progress += getProgressIncrease(craftTime);
