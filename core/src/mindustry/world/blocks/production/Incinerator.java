@@ -4,14 +4,16 @@ import arc.graphics.*;
 import arc.graphics.g2d.*;
 import arc.math.*;
 import arc.util.*;
+import arc.util.io.*;
 import mindustry.content.*;
 import mindustry.entities.*;
 import mindustry.gen.*;
 import mindustry.type.*;
 import mindustry.world.*;
+import mindustry.world.blocks.*;
 import mindustry.world.meta.*;
 
-public class Incinerator extends Block{
+public class Incinerator extends ProductionBlock{
     public Effect effect = Fx.fuelburn;
     public Color flameColor = Color.valueOf("ffad9d");
 
@@ -23,8 +25,13 @@ public class Incinerator extends Block{
         solid = true;
     }
 
-    public class IncineratorBuild extends Building{
+    public class IncineratorBuild extends ProductionBuild{
         public float heat;
+
+        @Override
+        public boolean shouldConsume(){
+            return productionShouldConsume();
+        }
 
         @Override
         public void updateTile(){
@@ -33,6 +40,7 @@ public class Incinerator extends Block{
 
         @Override
         public BlockStatus status(){
+            if(productionAutoPaused()) return BlockStatus.noOutput;
             return !enabled ? BlockStatus.logicDisable : heat > 0.5f ? BlockStatus.active : BlockStatus.noInput;
         }
 
@@ -77,6 +85,25 @@ public class Incinerator extends Block{
         @Override
         public boolean acceptLiquid(Building source, Liquid liquid){
             return heat > 0.5f && liquid.incinerable && enabled;
+        }
+
+        @Override
+        public byte version(){
+            return 1;
+        }
+
+        @Override
+        public void write(Writes write){
+            super.write(write);
+            write.f(heat);
+            writeProduction(write);
+        }
+
+        @Override
+        public void read(Reads read, byte revision){
+            super.read(read, revision);
+            heat = revision >= 1 ? read.f() : 0f;
+            readProduction(read, revision, 1);
         }
     }
 }

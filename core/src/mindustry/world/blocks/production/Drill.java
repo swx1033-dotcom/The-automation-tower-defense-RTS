@@ -18,51 +18,37 @@ import mindustry.logic.*;
 import mindustry.type.*;
 import mindustry.ui.*;
 import mindustry.world.*;
+import mindustry.world.blocks.*;
 import mindustry.world.blocks.environment.*;
 import mindustry.world.consumers.*;
 import mindustry.world.meta.*;
 
 import static mindustry.Vars.*;
 
-public class Drill extends Block{
+public class Drill extends ProductionBlock{
     public float hardnessDrillMultiplier = 50f;
 
     protected final ObjectIntMap<Item> oreCount = new ObjectIntMap<>();
     protected final Seq<Item> itemArray = new Seq<>();
 
-    /** Maximum tier of blocks this drill can mine. */
     public int tier;
-    /** Base time to drill one ore, in frames. */
     public float drillTime = 300;
-    /** How many times faster the drill will progress when boosted by liquid. */
     public float liquidBoostIntensity = 1.6f;
-    /** Speed at which the drill speeds up. */
     public float warmupSpeed = 0.015f;
-    /** Special exemption item that this drill can't mine. */
     public @Nullable Item blockedItem;
-    /** Special exemption items that this drill can't mine. */
     public @Nullable Seq<Item> blockedItems;
 
-    //return variables for countOre
     protected @Nullable Item returnItem;
     protected int returnCount;
 
-    /** Whether to draw the item this drill is mining. */
     public boolean drawMineItem = true;
-    /** Effect played when an item is produced. This is colored. */
     public Effect drillEffect = Fx.mine;
-    /** Drill effect randomness. Block size by default. */
     public float drillEffectRnd = -1f;
-    /** Chance of displaying the effect. Useful for extremely fast drills. */
     public float drillEffectChance = 0.02f;
-    /** Speed the drill bit rotates at. */
     public float rotateSpeed = 2f;
-    /** Effect randomly played while drilling. */
     public Effect updateEffect = Fx.pulverizeSmall;
-    /** Chance the update effect will appear. */
     public float updateEffectChance = 0.02f;
 
-    /** Multipliers of drill speed for each item. Defaults to 1. */
     public ObjectFloatMap<Item> drillMultipliers = new ObjectFloatMap<>();
 
     public boolean drawRim = false;
@@ -82,7 +68,6 @@ public class Drill extends Block{
         hasItems = true;
         ambientSound = Sounds.loopDrill;
         ambientSoundVolume = 0.019f;
-        //drills work in space I guess
         envEnabled |= Env.space;
         flags = EnumSet.of(BlockFlag.drill);
     }
@@ -234,7 +219,7 @@ public class Drill extends Block{
         return drops != null && drops.hardness <= tier && (blockedItems == null || !blockedItems.contains(drops));
     }
 
-    public class DrillBuild extends Building{
+    public class DrillBuild extends ProductionBuild{
         public float progress;
         public float warmup;
         public float timeDrilled;
@@ -245,7 +230,17 @@ public class Drill extends Block{
 
         @Override
         public boolean shouldConsume(){
-            return items.total() < itemCapacity && enabled && dominantItem != null;
+            return productionShouldConsume() && dominantItem != null && items.total() < itemCapacity;
+        }
+
+        @Override
+        public boolean productionOutputsFull(){
+            return items.total() >= itemCapacity;
+        }
+
+        @Override
+        public boolean productionInputsMissing(){
+            return dominantItem == null || dominantItems <= 0 || super.productionInputsMissing();
         }
 
         @Override
@@ -378,7 +373,7 @@ public class Drill extends Block{
 
         @Override
         public byte version(){
-            return 1;
+            return 2;
         }
 
         @Override
@@ -386,6 +381,7 @@ public class Drill extends Block{
             super.write(write);
             write.f(progress);
             write.f(warmup);
+            writeProduction(write);
         }
 
         @Override
@@ -395,6 +391,7 @@ public class Drill extends Block{
                 progress = read.f();
                 warmup = read.f();
             }
+            readProduction(read, revision, 2);
         }
     }
 

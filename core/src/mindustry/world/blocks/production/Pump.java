@@ -5,10 +5,12 @@ import arc.graphics.*;
 import arc.graphics.g2d.*;
 import arc.math.*;
 import arc.util.*;
+import arc.util.io.*;
 import mindustry.game.*;
 import mindustry.logic.*;
 import mindustry.type.*;
 import mindustry.world.*;
+import mindustry.world.blocks.*;
 import mindustry.world.blocks.liquid.*;
 import mindustry.world.draw.*;
 import mindustry.world.meta.*;
@@ -16,18 +18,23 @@ import mindustry.world.meta.*;
 import static mindustry.Vars.*;
 
 public class Pump extends LiquidBlock{
-    /** Pump amount per tile. */
     public float pumpAmount = 0.2f;
-    /** Interval in-between item consumptions, if applicable. */
     public float consumeTime = 60f * 5f;
     public float warmupSpeed = 0.019f;
     public DrawBlock drawer = new DrawMulti(new DrawDefault(), new DrawPumpLiquid());
 
     public Pump(String name){
         super(name);
+        ProductionBlock.setupBlock(this);
         group = BlockGroup.liquids;
         floating = true;
         envEnabled = Env.terrestrial;
+    }
+
+    @Override
+    public void init(){
+        ProductionBlock.wrapPowerConsumer(this);
+        super.init();
     }
 
     @Override
@@ -98,8 +105,6 @@ public class Pump extends LiquidBlock{
     @Override
     public void setBars(){
         super.setBars();
-
-        //replace dynamic output bar with own custom bar
         addLiquidBar((PumpBuild build) -> build.liquidDrop);
     }
 
@@ -107,7 +112,7 @@ public class Pump extends LiquidBlock{
         return tile != null && tile.floor().liquidDrop != null;
     }
 
-    public class PumpBuild extends LiquidBuild{
+    public class PumpBuild extends ProductionBlock.ProductionBuild{
         public float warmup, totalProgress;
         public float consTimer;
         public float amount = 0f;
@@ -153,7 +158,17 @@ public class Pump extends LiquidBlock{
 
         @Override
         public boolean shouldConsume(){
-            return liquidDrop != null && liquids.get(liquidDrop) < liquidCapacity - 0.01f && enabled;
+            return productionShouldConsume() && liquidDrop != null && liquids.get(liquidDrop) < liquidCapacity - 0.01f;
+        }
+
+        @Override
+        public boolean productionOutputsFull(){
+            return liquidDrop != null && liquids.get(liquidDrop) >= liquidCapacity - 0.01f;
+        }
+
+        @Override
+        public boolean productionInputsMissing(){
+            return liquidDrop == null || amount <= 0.0001f || super.productionInputsMissing();
         }
 
         @Override
@@ -162,7 +177,6 @@ public class Pump extends LiquidBlock{
                 float maxPump = Math.min(liquidCapacity - liquids.get(liquidDrop), amount * pumpAmount * edelta());
                 liquids.add(liquidDrop, maxPump);
 
-                //does nothing for most pumps, as those do not require items.
                 if((consTimer += delta()) >= consumeTime){
                     consume();
                     consTimer %= 1f;
@@ -193,6 +207,31 @@ public class Pump extends LiquidBlock{
         @Override
         public float totalProgress(){
             return totalProgress;
+        }
+
+        @Override
+        public byte version(){
+            return 1;
+        }
+
+        @Override
+        public void write(Writes write){
+            super.write(write);
+            write.f(warmup);
+            write.f(totalProgress);
+            write.f(consTimer);
+            writeProduction(write);
+        }
+
+        @Override
+        public void read(Reads read, byte revision){
+            super.read(read, revision);
+            if(revision >= 1){
+                warmup = read.f();
+                totalProgress = read.f();
+                consTimer = read.f();
+            }
+            readProduction(read, revision, 1);
         }
     }
 }

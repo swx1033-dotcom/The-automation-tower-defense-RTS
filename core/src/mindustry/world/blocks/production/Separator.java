@@ -9,14 +9,12 @@ import mindustry.gen.*;
 import mindustry.logic.*;
 import mindustry.type.*;
 import mindustry.world.*;
+import mindustry.world.blocks.*;
 import mindustry.world.consumers.*;
 import mindustry.world.draw.*;
 import mindustry.world.meta.*;
 
-/**
- * Extracts a random list of items from an input item and an input liquid.
- */
-public class Separator extends Block{
+public class Separator extends ProductionBlock{
     protected @Nullable ConsumeItems consItems;
 
     public ItemStack[] results;
@@ -72,7 +70,7 @@ public class Separator extends Block{
         return drawer.finalIcons(this);
     }
 
-    public class SeparatorBuild extends Building{
+    public class SeparatorBuild extends ProductionBuild{
         public float progress;
         public float totalProgress;
         public float warmup;
@@ -90,14 +88,18 @@ public class Separator extends Block{
 
         @Override
         public boolean shouldConsume(){
+            return productionShouldConsume() && !productionOutputsFull();
+        }
+
+        @Override
+        public boolean productionOutputsFull(){
             int total = items.total();
-            //very inefficient way of allowing separators to ignore input buffer storage
             if(consItems != null){
                 for(ItemStack stack : consItems.items){
                     total -= items.get(stack.item);
                 }
             }
-            return total < itemCapacity && enabled;
+            return total >= itemCapacity;
         }
 
         @Override
@@ -146,7 +148,6 @@ public class Separator extends Block{
                 int count = 0;
                 Item item = null;
 
-                //guaranteed desync since items are random - won't be fixed and probably isn't too important
                 for(ItemStack stack : results){
                     if(i >= count && i < count + stack.amount){
                         item = stack.item;
@@ -180,7 +181,7 @@ public class Separator extends Block{
 
         @Override
         public byte version(){
-            return 1;
+            return 2;
         }
 
         @Override
@@ -189,6 +190,7 @@ public class Separator extends Block{
             write.f(progress);
             write.f(warmup);
             write.i(seed);
+            writeProduction(write);
         }
 
         @Override
@@ -196,7 +198,8 @@ public class Separator extends Block{
             super.read(read, revision);
             progress = read.f();
             warmup = read.f();
-            if(revision == 1) seed = read.i();
+            if(revision >= 1) seed = read.i();
+            readProduction(read, revision, 2);
         }
     }
 }
