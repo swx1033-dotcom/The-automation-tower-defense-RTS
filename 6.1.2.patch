@@ -1,0 +1,45 @@
+diff --git a/core/src/mindustry/type/Item.java b/core/src/mindustry/type/Item.java
+index 3ba4dc9de5..9307c70c59 100644
+--- a/core/src/mindustry/type/Item.java
++++ b/core/src/mindustry/type/Item.java
+@@ -48,6 +48,40 @@ public class Item extends UnlockableContent implements Senseable{
+     public boolean buildable = true;
+     public boolean hidden = false;
+ 
++    public enum ItemQuality{
++        common, fine, rare
++    }
++
++    /** The quality tier of this item. */
++    public ItemQuality quality = ItemQuality.common;
++    /** The item that this item can be upgraded to, if any. */
++    public Item nextQualityItem;
++
++    /** @return the production efficiency multiplier for this item quality (e.g., +20% for fine). */
++    public float getMineSpeedMultiplier(){
++        if(quality == ItemQuality.fine) return 1.20f;
++        if(quality == ItemQuality.rare) return 1.50f;
++        return 1.0f;
++    }
++
++    /** @return the crafting yield multiplier when this item is used as a raw material (e.g., +15% for fine). */
++    public float getCraftYieldMultiplier(){
++        if(quality == ItemQuality.fine) return 1.15f;
++        if(quality == ItemQuality.rare) return 1.35f;
++        return 1.0f;
++    }
++
++    /**
++     * Conversion crafting logic: converts this item to the next quality tier.
++     * 3 common -> 1 fine, 3 fine -> 1 rare.
++     * @param amount The amount of current items to convert
++     * @return The amount of the next quality item produced
++     */
++    public int convertToNextQualityAmount(int amount){
++        if(nextQualityItem == null) return 0;
++        return amount / 3;
++    }
++
+     public Item(String name, Color color){
+         super(name);
+         this.color = color;
