@@ -1,0 +1,103 @@
+diff --git a/core/src/mindustry/world/blocks/distribution/Conveyor.java b/core/src/mindustry/world/blocks/distribution/Conveyor.java
+index 3fe2d78477..fa46e81af4 100644
+--- a/core/src/mindustry/world/blocks/distribution/Conveyor.java
++++ b/core/src/mindustry/world/blocks/distribution/Conveyor.java
+@@ -271,18 +271,14 @@ public class Conveyor extends Block implements Autotiler{
+ 
+                 ys[i] += maxmove;
+ 
+-                if(ys[i] > nextMax) ys[i] = nextMax;
+-                if(ys[i] > 0.5 && i > 0) mid = i - 1;
+-                xs[i] = Mathf.approach(xs[i], 0, moved*2);
+-
+-                if(ys[i] >= 1f && pass(ids[i])){
+-                    //align X position if passing forwards
+-                    if(aligned){
+-                        nextc.xs[nextc.lastInserted] = xs[i];
+-                    }
+-                    //remove last item
+-                    items.remove(ids[i], len - i);
+-                    len = Math.min(i, len);
++                float itemMax = getMoveDestination(ids[i], nextMax);
++                if(ys[i] > itemMax) ys[i] = itemMax;
++                if(ys[i] > 0.5f && i > 0) mid = i - 1;
++                xs[i] = Mathf.approach(xs[i], 0f, moved * 2f);
++
++                if(ys[i] >= 1f && pass(ids[i], xs[i])){
++                    items.remove(ids[i], 1);
++                    remove(i);
+                 }else if(ys[i] < minitem){
+                     minitem = ys[i];
+                 }
+@@ -297,9 +293,53 @@ public class Conveyor extends Block implements Autotiler{
+             noSleep();
+         }
+ 
+-        public boolean pass(Item item){
+-            if(item != null && next != null && next.team == team && next.acceptItem(this, item)){
+-                next.handleItem(this, item);
++        public float getMoveDestination(Item item, float defaultMax){
++            if(!aligned || item == null) return defaultMax;
++            if(!canPassTo(next, item) && getAlternateTarget(item) != null) return 1f;
++            return defaultMax;
++        }
++
++        public @Nullable Building getAlternateTarget(Item item){
++            Building left = nearby(Mathf.mod(rotation - 1, 4));
++            Building right = nearby(Mathf.mod(rotation + 1, 4));
++
++            if(left == next) left = null;
++            if(right == next || right == left) right = null;
++
++            boolean leftValid = canPassTo(left, item);
++            boolean rightValid = canPassTo(right, item);
++
++            if(!leftValid) return rightValid ? right : null;
++            if(!rightValid) return left;
++
++            float leftLoad = routePriority(left);
++            float rightLoad = routePriority(right);
++
++            if(!Mathf.equal(leftLoad, rightLoad, 0.001f)){
++                return leftLoad >= rightLoad ? left : right;
++            }
++
++            return ((tile.x + tile.y + item.id) & 1) == 0 ? left : right;
++        }
++
++        public float routePriority(Building building){
++            if(building instanceof ConveyorBuild conveyor){
++                return conveyor.minitem + (capacity - conveyor.len) * itemSpace;
++            }
++            return 2f;
++        }
++
++        public boolean canPassTo(@Nullable Building other, Item item){
++            return item != null && other != null && other.team == team && other.acceptItem(this, item);
++        }
++
++        public boolean pass(Item item, float x){
++            Building target = canPassTo(next, item) ? next : getAlternateTarget(item);
++            if(target != null){
++                target.handleItem(this, item);
++                if(target == nextc && aligned && nextc.lastInserted >= 0 && nextc.lastInserted < nextc.len){
++                    nextc.xs[nextc.lastInserted] = x;
++                }
+                 return true;
+             }
+             return false;
+@@ -372,11 +412,13 @@ public class Conveyor extends Block implements Autotiler{
+ 
+             if(Math.abs(facing.relativeTo(tile.x, tile.y) - r) == 0){ //idx = 0
+                 add(0);
++                lastInserted = 0;
+                 xs[0] = x;
+-                ys[0] = 0;
++                ys[0] = 0f;
+                 ids[0] = item;
+             }else{ //idx = mid
+                 add(mid);
++                lastInserted = mid;
+                 xs[mid] = x;
+                 ys[mid] = 0.5f;
+                 ids[mid] = item;
