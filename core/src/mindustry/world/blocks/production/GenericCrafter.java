@@ -15,6 +15,7 @@ import mindustry.mod.*;
 import mindustry.type.*;
 import mindustry.world.*;
 import mindustry.world.blocks.liquid.Conduit.*;
+import mindustry.world.consumers.*;
 import mindustry.world.draw.*;
 import mindustry.world.meta.*;
 
@@ -299,11 +300,13 @@ public class GenericCrafter extends Block{
         }
 
         public void craft(){
+            float qualityBonus = qualityBonus();
             consume();
 
             if(outputItems != null){
                 for(var output : outputItems){
-                    for(int i = 0; i < output.amount; i++){
+                    int totalAmount = Math.round(output.amount * qualityBonus);
+                    for(int i = 0; i < totalAmount; i++){
                         offload(output.item);
                     }
                 }
@@ -313,6 +316,21 @@ public class GenericCrafter extends Block{
                 craftEffect.at(x, y);
             }
             progress %= 1f;
+        }
+
+        public float qualityBonus(){
+            float totalMult = 0f;
+            int count = 0;
+            for(Consume cons : block.consumers){
+                if(cons instanceof ConsumeItems){
+                    ConsumeItems ci = (ConsumeItems)cons;
+                    for(ItemStack stack : ci.items){
+                        totalMult += stack.item.quality.craftMultiplier;
+                        count++;
+                    }
+                }
+            }
+            return count == 0 ? 1f : totalMult / count;
         }
 
         public void dumpOutputs(){

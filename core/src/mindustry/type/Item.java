@@ -16,6 +16,35 @@ import mindustry.world.meta.*;
 import static mindustry.Vars.*;
 
 public class Item extends UnlockableContent implements Senseable{
+
+    public enum ItemQuality{
+        NORMAL(1f, 1f, 0),
+        REFINED(1.2f, 1.15f, 1),
+        RARE(1.5f, 1.35f, 2);
+
+        public final float drillMultiplier;
+        public final float craftMultiplier;
+        public final int tier;
+
+        ItemQuality(float drillMultiplier, float craftMultiplier, int tier){
+            this.drillMultiplier = drillMultiplier;
+            this.craftMultiplier = craftMultiplier;
+            this.tier = tier;
+        }
+
+        public ItemQuality upgrade(){
+            if(this == NORMAL) return REFINED;
+            if(this == REFINED) return RARE;
+            return RARE;
+        }
+
+        public ItemQuality downgrade(){
+            if(this == RARE) return REFINED;
+            if(this == REFINED) return NORMAL;
+            return NORMAL;
+        }
+    }
+
     public Color color;
 
     /** how explosive this item is. */
@@ -48,6 +77,12 @@ public class Item extends UnlockableContent implements Senseable{
     public boolean buildable = true;
     public boolean hidden = false;
 
+    /** Quality tier of this item. Determines mining speed, crafting output bonuses, and conversion eligibility. */
+    public ItemQuality quality = ItemQuality.NORMAL;
+
+    /** The base item that this quality variant derives from. Null for base-quality items. */
+    public @Nullable Item baseItem;
+
     public Item(String name, Color color){
         super(name);
         this.color = color;
@@ -55,6 +90,12 @@ public class Item extends UnlockableContent implements Senseable{
 
     public Item(String name){
         this(name, new Color(Color.black));
+    }
+
+    public Item(String name, Color color, ItemQuality quality){
+        super(name);
+        this.color = color;
+        this.quality = quality;
     }
 
     @Override
@@ -161,5 +202,24 @@ public class Item extends UnlockableContent implements Senseable{
     /** Allocates a new array containing all items that generate ores. */
     public static Seq<Item> getAllOres(){
         return content.blocks().select(b -> b instanceof OreBlock).map(b -> b.itemDrop);
+    }
+
+    public static final int QUALITY_CONVERSION_COUNT = 3;
+
+    /** Finds the quality variant of a base item at the given quality tier. Returns null if not registered. */
+    public static @Nullable Item findQualityVariant(Item base, ItemQuality quality){
+        for(Item item : content.items()){
+            if(item.baseItem == base && item.quality == quality){
+                return item;
+            }
+        }
+        return null;
+    }
+
+    /** Returns the conversion ratio description for quality upgrading. */
+    public static int conversionCost(ItemQuality from, ItemQuality to){
+        int diff = to.tier - from.tier;
+        if(diff <= 0) return 1;
+        return (int)Math.pow(QUALITY_CONVERSION_COUNT, diff);
     }
 }
