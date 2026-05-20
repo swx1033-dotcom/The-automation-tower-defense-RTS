@@ -9,37 +9,49 @@ public class ItemStack implements Comparable<ItemStack>{
 
     public Item item;
     public int amount = 0;
+    public Item.Quality quality = Item.Quality.common;
 
     public ItemStack(Item item, int amount){
+        this(item, amount, Item.Quality.common);
+    }
+
+    public ItemStack(Item item, int amount, Item.Quality quality){
         if(item == null) item = Items.copper;
         this.item = item;
         this.amount = amount;
+        this.quality = quality;
     }
 
     //serialization only
     public ItemStack(){
         //prevent nulls.
         item = Items.copper;
+        quality = Item.Quality.common;
     }
 
     public ItemStack set(Item item, int amount){
+        return set(item, amount, Item.Quality.common);
+    }
+
+    public ItemStack set(Item item, int amount, Item.Quality quality){
         this.item = item;
         this.amount = amount;
+        this.quality = quality;
         return this;
     }
 
     public ItemStack copy(){
-        return new ItemStack(item, amount);
+        return new ItemStack(item, amount, quality);
     }
 
     public boolean equals(ItemStack other){
-        return other != null && other.item == item && other.amount == amount;
+        return other != null && other.item == item && other.amount == amount && other.quality == quality;
     }
 
     public static ItemStack[] mult(ItemStack[] stacks, float amount){
         var copy = new ItemStack[stacks.length];
         for(int i = 0; i < copy.length; i++){
-            copy[i] = new ItemStack(stacks[i].item, Mathf.round(stacks[i].amount * amount));
+            copy[i] = new ItemStack(stacks[i].item, Mathf.round(stacks[i].amount * amount), stacks[i].quality);
         }
         return copy;
     }
@@ -70,16 +82,18 @@ public class ItemStack implements Comparable<ItemStack>{
 
     @Override
     public int compareTo(ItemStack itemStack){
-        return item.compareTo(itemStack.item);
+        int itemCompare = item.compareTo(itemStack.item);
+        if(itemCompare != 0) return itemCompare;
+        return Integer.compare(quality.tier, itemStack.quality.tier);
     }
 
     @Override
     public boolean equals(Object o){
-        return this == o || (o instanceof ItemStack stack && stack.amount == amount && item == stack.item);
+        return this == o || (o instanceof ItemStack stack && stack.amount == amount && item == stack.item && stack.quality == quality);
     }
 
     @Override
     public String toString(){
-        return item + ": " + amount;
+        return item + "[" + quality.name() + "]: " + amount;
     }
 }

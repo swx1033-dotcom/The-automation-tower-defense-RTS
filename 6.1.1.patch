@@ -1,0 +1,120 @@
+diff --git a/core/src/mindustry/type/Item.java b/core/src/mindustry/type/Item.java
+index 3ba4dc9de5..90d04fdf66 100644
+--- a/core/src/mindustry/type/Item.java
++++ b/core/src/mindustry/type/Item.java
+@@ -18,6 +18,36 @@ import static mindustry.Vars.*;
+ public class Item extends UnlockableContent implements Senseable{
+     public Color color;
+ 
++    /** 物品品质枚举 */
++    public enum Quality{
++        /** 普通品质 */
++        common(0, 1.0f, 1.0f),
++        /** 精良品质 */
++        fine(1, 1.2f, 1.15f),
++        /** 稀有品质 */
++        rare(2, 1.4f, 1.3f);
++
++        public final int tier;
++        public final float miningSpeedBonus;
++        public final float craftingBonus;
++
++        Quality(int tier, float miningSpeedBonus, float craftingBonus){
++            this.tier = tier;
++            this.miningSpeedBonus = miningSpeedBonus;
++            this.craftingBonus = craftingBonus;
++        }
++
++        /** 获取下一级品质，如果已是最高级则返回自身 */
++        public Quality next(){
++            return ordinal() < values().length - 1 ? values()[ordinal() + 1] : this;
++        }
++
++        /** 获取上一级品质，如果已是最低级则返回自身 */
++        public Quality prev(){
++            return ordinal() > 0 ? values()[ordinal() - 1] : this;
++        }
++    }
++
+     /** how explosive this item is. */
+     public float explosiveness = 0f;
+     /** flammability above 0.3 makes this eligible for item burners. */
+diff --git a/core/src/mindustry/type/ItemStack.java b/core/src/mindustry/type/ItemStack.java
+index a0e0f4c587..c002ac1d56 100644
+--- a/core/src/mindustry/type/ItemStack.java
++++ b/core/src/mindustry/type/ItemStack.java
+@@ -9,37 +9,49 @@ public class ItemStack implements Comparable<ItemStack>{
+ 
+     public Item item;
+     public int amount = 0;
++    public Item.Quality quality = Item.Quality.common;
+ 
+     public ItemStack(Item item, int amount){
++        this(item, amount, Item.Quality.common);
++    }
++
++    public ItemStack(Item item, int amount, Item.Quality quality){
+         if(item == null) item = Items.copper;
+         this.item = item;
+         this.amount = amount;
++        this.quality = quality;
+     }
+ 
+     //serialization only
+     public ItemStack(){
+         //prevent nulls.
+         item = Items.copper;
++        quality = Item.Quality.common;
+     }
+ 
+     public ItemStack set(Item item, int amount){
++        return set(item, amount, Item.Quality.common);
++    }
++
++    public ItemStack set(Item item, int amount, Item.Quality quality){
+         this.item = item;
+         this.amount = amount;
++        this.quality = quality;
+         return this;
+     }
+ 
+     public ItemStack copy(){
+-        return new ItemStack(item, amount);
++        return new ItemStack(item, amount, quality);
+     }
+ 
+     public boolean equals(ItemStack other){
+-        return other != null && other.item == item && other.amount == amount;
++        return other != null && other.item == item && other.amount == amount && other.quality == quality;
+     }
+ 
+     public static ItemStack[] mult(ItemStack[] stacks, float amount){
+         var copy = new ItemStack[stacks.length];
+         for(int i = 0; i < copy.length; i++){
+-            copy[i] = new ItemStack(stacks[i].item, Mathf.round(stacks[i].amount * amount));
++            copy[i] = new ItemStack(stacks[i].item, Mathf.round(stacks[i].amount * amount), stacks[i].quality);
+         }
+         return copy;
+     }
+@@ -70,16 +82,18 @@ public class ItemStack implements Comparable<ItemStack>{
+ 
+     @Override
+     public int compareTo(ItemStack itemStack){
+-        return item.compareTo(itemStack.item);
++        int itemCompare = item.compareTo(itemStack.item);
++        if(itemCompare != 0) return itemCompare;
++        return Integer.compare(quality.tier, itemStack.quality.tier);
+     }
+ 
+     @Override
+     public boolean equals(Object o){
+-        return this == o || (o instanceof ItemStack stack && stack.amount == amount && item == stack.item);
++        return this == o || (o instanceof ItemStack stack && stack.amount == amount && item == stack.item && stack.quality == quality);
+     }
+ 
+     @Override
+     public String toString(){
+-        return item + ": " + amount;
++        return item + "[" + quality.name() + "]: " + amount;
+     }
+ }
