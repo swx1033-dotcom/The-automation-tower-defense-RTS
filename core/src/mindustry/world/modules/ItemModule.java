@@ -13,6 +13,12 @@ import static mindustry.Vars.*;
 public class ItemModule extends BlockModule{
     public static final ItemModule empty = new ItemModule();
 
+    public static class QualityConsumption{
+        public int amount;
+        public float totalCraftMultiplier;
+        public Item.Quality highestQuality = Item.Quality.normal;
+    }
+
     private static final int windowSize = 6;
     private static WindowedMean[] cacheFlow;
     private static float[] cacheSums;
@@ -40,7 +46,6 @@ public class ItemModule extends BlockModule{
     }
 
     public void updateFlow(){
-        //update the flow at N fps at most
         if(flowTimer.get(1, pollScl)){
 
             if(flow == null){
@@ -127,6 +132,48 @@ public class ItemModule extends BlockModule{
         return get(item) >= amount;
     }
 
+    public int getEquivalent(Item item){
+        if(!item.acceptsEquivalentQualities()) return get(item);
+
+        int total = 0;
+        for(Item variant : item.qualityFamily()){
+            total += get(variant);
+        }
+        return total;
+    }
+
+    public boolean hasEquivalent(Item item, int amount){
+        return getEquivalent(item) >= amount;
+    }
+
+    public QualityConsumption removeEquivalent(Item item, int amount){
+        QualityConsumption result = new QualityConsumption();
+
+        if(!item.acceptsEquivalentQualities()){
+            int used = Math.min(amount, get(item));
+            remove(item, used);
+            result.amount = used;
+            result.totalCraftMultiplier = used * item.craftYieldMultiplier();
+            result.highestQuality = item.quality;
+            return result;
+        }
+
+        for(int i = Item.Quality.all.length - 1; i >= 0 && amount > 0; i--){
+            Item variant = item.withQuality(Item.Quality.all[i]);
+            int available = get(variant);
+            int used = Math.min(available, amount);
+            if(used <= 0) continue;
+
+            remove(variant, used);
+            amount -= used;
+            result.amount += used;
+            result.totalCraftMultiplier += used * variant.craftYieldMultiplier();
+            result.highestQuality = Item.Quality.max(result.highestQuality, variant.quality);
+        }
+
+        return result;
+    }
+
     public boolean has(ItemStack[] stacks){
         for(ItemStack stack : stacks){
             if(!has(stack.item, stack.amount)) return false;
@@ -157,9 +204,6 @@ public class ItemModule extends BlockModule{
         return true;
     }
 
-    /**
-     * Returns true if this entity has at least one of each item in each stack.
-     */
     public boolean hasOne(ItemStack[] stacks){
         for(ItemStack stack : stacks){
             if(!has(stack.item, 1)) return false;
@@ -190,11 +234,11 @@ public class ItemModule extends BlockModule{
 
     public @Nullable Item take(){
         for(int i = 0; i < items.length; i++){
-            int index = (i + takeRotation);
+            int index = i + takeRotation;
             if(index >= items.length) index -= items.length;
             if(items[index] > 0){
-                items[index] --;
-                total --;
+                items[index]--;
+                total--;
                 takeRotation = index + 1;
                 return content.item(index);
             }
@@ -211,7 +255,7 @@ public class ItemModule extends BlockModule{
     }
 
     public void set(Item item, int amount){
-        total += (amount - items[item.id]);
+        total += amount - items[item.id];
         items[item.id] = amount;
     }
 
@@ -294,15 +338,14 @@ public class ItemModule extends BlockModule{
 
         for(int i = 0; i < items.length; i++){
             if(items[i] > 0){
-                write.s(i); //item ID
-                write.i(items[i]); //item amount
+                write.s(i);
+                write.i(items[i]);
             }
         }
     }
 
     @Override
     public void read(Reads read, boolean legacy){
-        //just in case, reset items
         Arrays.fill(items, 0);
         int count = legacy ? read.ub() : read.s();
         total = 0;
@@ -316,31 +359,5 @@ public class ItemModule extends BlockModule{
                 total += itemamount;
             }
         }
-    }
-
-    public interface ItemConsumer{
-        void accept(Item item, int amount);
-    }
-
-    public interface ItemCalculator{
-        float get(Item item, int amount);
-    }
-
-    @Override
-    public String toString(){
-        var res = new StringBuilder();
-        res.append("ItemModule{");
-        boolean any = false;
-        for(int i = 0; i < items.length; i++){
-            if(items[i] != 0){
-                res.append(content.items().get(i).name).append(":").append(items[i]).append(",");
-                any = true;
-            }
-        }
-        if(any){
-            res.setLength(res.length() - 1);
-        }
-        res.append("}");
-        return res.toString();
     }
 }

@@ -35,7 +35,6 @@ public class Items{
         sand = new Item("sand", Color.valueOf("f7cba4")){{
             lowPriority = true;
             buildable = false;
-            //needed to show up as requirement
             alwaysUnlocked = true;
         }};
 
@@ -135,17 +134,34 @@ public class Items{
             hidden = true;
         }};
 
-        serpuloItems.addAll(
+        var allItems = Seq.with(
+        scrap, copper, lead, graphite, coal, titanium, thorium, silicon, plastanium,
+        phaseFabric, surgeAlloy, sporePod, sand, blastCompound, pyratite, metaglass,
+        beryllium, tungsten, oxide, carbide, fissileMatter, dormantCyst
+        );
+
+        for(Item item : allItems){
+            item.ensureQualityVariants();
+        }
+
+        addQualityItems(serpuloItems,
         scrap, copper, lead, graphite, coal, titanium, thorium, silicon, plastanium,
         phaseFabric, surgeAlloy, sporePod, sand, blastCompound, pyratite, metaglass
         );
 
-        erekirItems.addAll(
+        addQualityItems(erekirItems,
         graphite, thorium, silicon, phaseFabric, surgeAlloy, sand,
         beryllium, tungsten, oxide, carbide, fissileMatter, dormantCyst
         );
 
         erekirOnlyItems.addAll(erekirItems).removeAll(serpuloItems);
+    }
 
+    private static void addQualityItems(Seq<Item> list, Item... items){
+        for(Item item : items){
+            list.add(item);
+            list.add(item.withQuality(Item.Quality.fine));
+            list.add(item.withQuality(Item.Quality.rare));
+        }
     }
 }

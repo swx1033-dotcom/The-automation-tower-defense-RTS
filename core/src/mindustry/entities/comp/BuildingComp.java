@@ -89,6 +89,8 @@ abstract class BuildingComp implements Posc, Teamc, Healthc, Buildingc, Timerc, 
     transient float potentialEfficiency;
     /** Whether there are any consumers (aside from power) that have efficiency > 0. */
     transient boolean shouldConsumePower;
+    transient Item.Quality consumedItemQuality = Item.Quality.normal;
+    transient float consumedItemYieldMultiplier = 1f;
 
     transient float healSuppressionTime = -1f;
     transient float lastHealTime = -120f * 10f;
@@ -1876,7 +1878,26 @@ abstract class BuildingComp implements Posc, Teamc, Healthc, Buildingc, Timerc, 
 
     public void onNearbyBuildAdded(Building other){}
 
+    public void setItemQualityState(Item.Quality quality, float yieldMultiplier){
+        consumedItemQuality = quality;
+        consumedItemYieldMultiplier = yieldMultiplier;
+    }
+
+    public void resetItemQualityState(){
+        consumedItemQuality = Item.Quality.normal;
+        consumedItemYieldMultiplier = 1f;
+    }
+
+    public Item.Quality consumedItemQuality(){
+        return consumedItemQuality;
+    }
+
+    public float consumedItemYieldMultiplier(){
+        return consumedItemYieldMultiplier;
+    }
+
     public void consume(){
+        resetItemQualityState();
         for(Consume cons : block.consumers){
             cons.trigger(self());
         }

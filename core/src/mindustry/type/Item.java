@@ -16,6 +16,35 @@ import mindustry.world.meta.*;
 import static mindustry.Vars.*;
 
 public class Item extends UnlockableContent implements Senseable{
+    public enum Quality{
+        normal(1f, 1f, Color.valueOf("8f8f8f"), "普通"),
+        fine(1.2f, 1.15f, Color.valueOf("5ec4ff"), "精良"),
+        rare(1.5f, 1.35f, Color.valueOf("c68cff"), "稀有");
+
+        public static final Quality[] all = values();
+
+        public final float drillSpeedMultiplier;
+        public final float craftYieldMultiplier;
+        public final Color accentColor;
+        public final String displayName;
+
+        Quality(float drillSpeedMultiplier, float craftYieldMultiplier, Color accentColor, String displayName){
+            this.drillSpeedMultiplier = drillSpeedMultiplier;
+            this.craftYieldMultiplier = craftYieldMultiplier;
+            this.accentColor = accentColor;
+            this.displayName = displayName;
+        }
+
+        public @Nullable Quality next(){
+            int next = ordinal() + 1;
+            return next >= all.length ? null : all[next];
+        }
+
+        public static Quality max(Quality first, Quality second){
+            return first.ordinal() >= second.ordinal() ? first : second;
+        }
+    }
+
     public Color color;
 
     /** how explosive this item is. */
@@ -48,18 +77,110 @@ public class Item extends UnlockableContent implements Senseable{
     public boolean buildable = true;
     public boolean hidden = false;
 
+    public Quality quality = Quality.normal;
+    protected Item qualityBase = this;
+    protected Item[] qualityItems;
+
     public Item(String name, Color color){
         super(name);
         this.color = color;
+    }
+
+    protected Item(String name, Color color, Quality quality, Item qualityBase){
+        this(name, color);
+        this.quality = quality;
+        this.qualityBase = qualityBase;
     }
 
     public Item(String name){
         this(name, new Color(Color.black));
     }
 
+    public boolean isBaseItem(){
+        return quality == Quality.normal && qualityBase == this;
+    }
+
+    public Item baseItem(){
+        return qualityBase;
+    }
+
+    public boolean acceptsEquivalentQualities(){
+        return isBaseItem();
+    }
+
+    public float drillSpeedMultiplier(){
+        return quality.drillSpeedMultiplier;
+    }
+
+    public float craftYieldMultiplier(){
+        return quality.craftYieldMultiplier;
+    }
+
+    public Item[] qualityFamily(){
+        return qualityBase.qualityItems == null ? new Item[]{qualityBase} : qualityBase.qualityItems;
+    }
+
+    public Item withQuality(Quality quality){
+        if(quality == this.quality && !acceptsEquivalentQualities()) return this;
+        if(qualityBase.qualityItems == null) return qualityBase;
+        return qualityBase.qualityItems[quality.ordinal()];
+    }
+
+    public Item upgradedQualityItem(){
+        Quality next = quality.next();
+        return next == null ? this : withQuality(next);
+    }
+
+    public Item craftedWithQuality(Quality quality){
+        return acceptsEquivalentQualities() ? withQuality(quality) : this;
+    }
+
+    public void ensureQualityVariants(){
+        if(!isBaseItem() || qualityItems != null) return;
+
+        qualityItems = new Item[Quality.all.length];
+        qualityItems[Quality.normal.ordinal()] = this;
+
+        for(Quality quality : Quality.all){
+            if(quality == Quality.normal) continue;
+
+            Item variant = new Item(name + "-" + quality.name(), new Color(color).lerp(quality.accentColor, 0.22f), quality, this);
+            variant.localizedName = localizedName + " " + quality.displayName;
+            variant.description = description;
+            variant.details = details;
+            variant.credit = credit;
+            variant.explosiveness = explosiveness;
+            variant.flammability = flammability;
+            variant.radioactivity = radioactivity;
+            variant.charge = charge;
+            variant.hardness = hardness;
+            variant.cost = cost;
+            variant.healthScaling = healthScaling;
+            variant.lowPriority = lowPriority;
+            variant.frames = frames;
+            variant.transitionFrames = transitionFrames;
+            variant.frameTime = frameTime;
+            variant.buildable = buildable;
+            variant.hidden = hidden;
+            variant.alwaysUnlocked = alwaysUnlocked;
+            variant.inlineDescription = inlineDescription;
+            variant.hideDetails = hideDetails;
+            variant.hideDatabase = hideDatabase;
+            variant.generateIcons = generateIcons;
+            variant.selectionSize = selectionSize;
+            variant.allDatabaseTabs = allDatabaseTabs;
+            variant.databaseCategory = databaseCategory;
+            variant.databaseTag = databaseTag;
+            variant.shownPlanets.addAll(shownPlanets);
+            variant.databaseTabs.addAll(databaseTabs);
+            variant.fullOverride = variant.name;
+            variant.qualityItems = qualityItems;
+            qualityItems[quality.ordinal()] = variant;
+        }
+    }
+
     @Override
     public boolean isOnPlanet(Planet planet){
-        //hidden items should not appear on any planet's resource selection screen
         return super.isOnPlanet(planet) && !hidden;
     }
 
@@ -70,9 +191,14 @@ public class Item extends UnlockableContent implements Senseable{
 
     @Override
     public void loadIcon(){
+        if(!isBaseItem()){
+            fullIcon = Core.atlas.find(fullOverride == null ? name : fullOverride, qualityBase.fullIcon);
+            uiIcon = fullIcon;
+            return;
+        }
+
         super.loadIcon();
 
-        //animation code ""borrowed"" from Project Unity - original implementation by GlennFolker and sk7725
         if(frames > 0){
             TextureRegion[] regions = new TextureRegion[frames * (transitionFrames + 1)];
 
@@ -122,9 +248,26 @@ public class Item extends UnlockableContent implements Senseable{
 
     @Override
     public void createIcons(MultiPacker packer){
+        if(!isBaseItem()){
+            String regionName = qualityBase.frames > 0 ? qualityBase.name + "1" : qualityBase.name;
+            Pixmap image = Core.atlas.getPixmap(regionName).crop();
+            int overlay = Tmp.c1.set(quality.accentColor).a(0.32f).rgba8888();
+
+            for(int x = 0; x < image.width; x++){
+                for(int y = 0; y < image.height; y++){
+                    if(image.getA(x, y) > 0){
+                        image.setRaw(x, y, Pixmap.blend(overlay, image.getRaw(x, y)));
+                    }
+                }
+            }
+
+            packer.add(PageType.main, name, image);
+            image.dispose();
+            return;
+        }
+
         super.createIcons(packer);
 
-        //create transitions
         if(frames > 0 && transitionFrames > 0){
             var pixmaps = new PixmapRegion[frames];
 

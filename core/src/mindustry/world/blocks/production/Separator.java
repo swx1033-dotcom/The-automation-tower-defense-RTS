@@ -13,9 +13,6 @@ import mindustry.world.consumers.*;
 import mindustry.world.draw.*;
 import mindustry.world.meta.*;
 
-/**
- * Extracts a random list of items from an input item and an input liquid.
- */
 public class Separator extends Block{
     protected @Nullable ConsumeItems consItems;
 
@@ -77,6 +74,7 @@ public class Separator extends Block{
         public float totalProgress;
         public float warmup;
         public int seed;
+        public float outputRemainder;
 
         @Override
         public void created(){
@@ -91,13 +89,12 @@ public class Separator extends Block{
         @Override
         public boolean shouldConsume(){
             int total = items.total();
-            //very inefficient way of allowing separators to ignore input buffer storage
             if(consItems != null){
                 for(ItemStack stack : consItems.items){
-                    total -= items.get(stack.item);
+                    total -= items.getEquivalent(stack.item);
                 }
             }
-            return total < itemCapacity && enabled;
+            return total + Mathf.ceil(Item.Quality.rare.craftYieldMultiplier) <= itemCapacity && enabled;
         }
 
         @Override
@@ -142,23 +139,29 @@ public class Separator extends Block{
                 int sum = 0;
                 for(ItemStack stack : results) sum += stack.amount;
 
-                int i = Mathf.randomSeed(seed++, 0, sum - 1);
-                int count = 0;
-                Item item = null;
-
-                //guaranteed desync since items are random - won't be fixed and probably isn't too important
-                for(ItemStack stack : results){
-                    if(i >= count && i < count + stack.amount){
-                        item = stack.item;
-                        break;
-                    }
-                    count += stack.amount;
-                }
-
                 consume();
 
-                if(item != null && items.get(item) < itemCapacity){
-                    offload(item);
+                float outputTotal = consumedItemYieldMultiplier() + outputRemainder;
+                int produced = Mathf.floor(outputTotal);
+                outputRemainder = outputTotal - produced;
+                Item.Quality outputQuality = consumedItemQuality();
+
+                for(int producedIndex = 0; producedIndex < produced; producedIndex++){
+                    int i = Mathf.randomSeed(seed++, 0, sum - 1);
+                    int count = 0;
+                    Item item = null;
+
+                    for(ItemStack stack : results){
+                        if(i >= count && i < count + stack.amount){
+                            item = stack.item.craftedWithQuality(outputQuality);
+                            break;
+                        }
+                        count += stack.amount;
+                    }
+
+                    if(item != null && items.getEquivalent(item.baseItem()) < itemCapacity){
+                        offload(item);
+                    }
                 }
             }
 

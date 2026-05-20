@@ -168,7 +168,7 @@ public class Drill extends Block{
     }
 
     public float getDrillTime(Item item){
-        return (drillTime + hardnessDrillMultiplier * item.hardness) / drillMultipliers.get(item, 1f);
+        return (drillTime + hardnessDrillMultiplier * item.hardness) / (drillMultipliers.get(item, 1f) * item.drillSpeedMultiplier());
     }
 
     @Override

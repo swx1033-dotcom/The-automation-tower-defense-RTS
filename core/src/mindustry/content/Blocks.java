@@ -84,7 +84,7 @@ public class Blocks{
     wallOreBeryllium, graphiticWall, wallOreGraphite, wallOreTungsten,
 
     //crafting
-    siliconSmelter, siliconCrucible, kiln, graphitePress, plastaniumCompressor, multiPress, phaseWeaver, surgeSmelter, pyratiteMixer, blastMixer, cryofluidMixer,
+    siliconSmelter, siliconCrucible, kiln, graphitePress, plastaniumCompressor, multiPress, qualityConverter, phaseWeaver, surgeSmelter, pyratiteMixer, blastMixer, cryofluidMixer,
     melter, separator, disassembler, sporePress, pulverizer, incinerator, coalCentrifuge,
 
     //crafting - erekir
@@ -1064,6 +1064,16 @@ public class Blocks{
             consumePower(1.8f);
             consumeItem(Items.coal, 3);
             consumeLiquid(Liquids.water, 0.1f);
+        }};
+
+        qualityConverter = new QualityConverter("quality-converter"){{
+            requirements(Category.crafting, with(Items.copper, 80, Items.lead, 60, Items.graphite, 40));
+            localizedName = "品质转化器";
+            description = "将3个同类低品质物品转化为1个更高品质物品。";
+            size = 2;
+            hasPower = true;
+            itemCapacity = 12;
+            consumePower(1.2f);
         }};
 
         siliconSmelter = new GenericCrafter("silicon-smelter"){{

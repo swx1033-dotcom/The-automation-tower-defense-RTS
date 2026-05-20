@@ -1,0 +1,823 @@
+diff --git a/core/src/mindustry/content/Blocks.java b/core/src/mindustry/content/Blocks.java
+index ebec3e9e12..29b1b66d2b 100644
+--- a/core/src/mindustry/content/Blocks.java
++++ b/core/src/mindustry/content/Blocks.java
+@@ -84,7 +84,7 @@ public class Blocks{
+     wallOreBeryllium, graphiticWall, wallOreGraphite, wallOreTungsten,
+ 
+     //crafting
+-    siliconSmelter, siliconCrucible, kiln, graphitePress, plastaniumCompressor, multiPress, phaseWeaver, surgeSmelter, pyratiteMixer, blastMixer, cryofluidMixer,
++    siliconSmelter, siliconCrucible, kiln, graphitePress, plastaniumCompressor, multiPress, qualityConverter, phaseWeaver, surgeSmelter, pyratiteMixer, blastMixer, cryofluidMixer,
+     melter, separator, disassembler, sporePress, pulverizer, incinerator, coalCentrifuge,
+ 
+     //crafting - erekir
+@@ -1066,6 +1066,16 @@ public class Blocks{
+             consumeLiquid(Liquids.water, 0.1f);
+         }};
+ 
++        qualityConverter = new QualityConverter("quality-converter"){{
++            requirements(Category.crafting, with(Items.copper, 80, Items.lead, 60, Items.graphite, 40));
++            localizedName = "品质转化器";
++            description = "将3个同类低品质物品转化为1个更高品质物品。";
++            size = 2;
++            hasPower = true;
++            itemCapacity = 12;
++            consumePower(1.2f);
++        }};
++
+         siliconSmelter = new GenericCrafter("silicon-smelter"){{
+             requirements(Category.crafting, with(Items.copper, 30, Items.lead, 25));
+             craftEffect = Fx.smeltsmoke;
+diff --git a/core/src/mindustry/content/Items.java b/core/src/mindustry/content/Items.java
+index 00cc3cc5d5..9da164f06a 100644
+--- a/core/src/mindustry/content/Items.java
++++ b/core/src/mindustry/content/Items.java
+@@ -35,7 +35,6 @@ public class Items{
+         sand = new Item("sand", Color.valueOf("f7cba4")){{
+             lowPriority = true;
+             buildable = false;
+-            //needed to show up as requirement
+             alwaysUnlocked = true;
+         }};
+ 
+@@ -135,17 +134,34 @@ public class Items{
+             hidden = true;
+         }};
+ 
+-        serpuloItems.addAll(
++        var allItems = Seq.with(
++        scrap, copper, lead, graphite, coal, titanium, thorium, silicon, plastanium,
++        phaseFabric, surgeAlloy, sporePod, sand, blastCompound, pyratite, metaglass,
++        beryllium, tungsten, oxide, carbide, fissileMatter, dormantCyst
++        );
++
++        for(Item item : allItems){
++            item.ensureQualityVariants();
++        }
++
++        addQualityItems(serpuloItems,
+         scrap, copper, lead, graphite, coal, titanium, thorium, silicon, plastanium,
+         phaseFabric, surgeAlloy, sporePod, sand, blastCompound, pyratite, metaglass
+         );
+ 
+-        erekirItems.addAll(
++        addQualityItems(erekirItems,
+         graphite, thorium, silicon, phaseFabric, surgeAlloy, sand,
+         beryllium, tungsten, oxide, carbide, fissileMatter, dormantCyst
+         );
+ 
+         erekirOnlyItems.addAll(erekirItems).removeAll(serpuloItems);
++    }
+ 
++    private static void addQualityItems(Seq<Item> list, Item... items){
++        for(Item item : items){
++            list.add(item);
++            list.add(item.withQuality(Item.Quality.fine));
++            list.add(item.withQuality(Item.Quality.rare));
++        }
+     }
+ }
+diff --git a/core/src/mindustry/entities/comp/BuildingComp.java b/core/src/mindustry/entities/comp/BuildingComp.java
+index eb79bc7fc2..ff271b6164 100644
+--- a/core/src/mindustry/entities/comp/BuildingComp.java
++++ b/core/src/mindustry/entities/comp/BuildingComp.java
+@@ -89,6 +89,8 @@ abstract class BuildingComp implements Posc, Teamc, Healthc, Buildingc, Timerc,
+     transient float potentialEfficiency;
+     /** Whether there are any consumers (aside from power) that have efficiency > 0. */
+     transient boolean shouldConsumePower;
++    transient Item.Quality consumedItemQuality = Item.Quality.normal;
++    transient float consumedItemYieldMultiplier = 1f;
+ 
+     transient float healSuppressionTime = -1f;
+     transient float lastHealTime = -120f * 10f;
+@@ -1876,7 +1878,26 @@ abstract class BuildingComp implements Posc, Teamc, Healthc, Buildingc, Timerc,
+ 
+     public void onNearbyBuildAdded(Building other){}
+ 
++    public void setItemQualityState(Item.Quality quality, float yieldMultiplier){
++        consumedItemQuality = quality;
++        consumedItemYieldMultiplier = yieldMultiplier;
++    }
++
++    public void resetItemQualityState(){
++        consumedItemQuality = Item.Quality.normal;
++        consumedItemYieldMultiplier = 1f;
++    }
++
++    public Item.Quality consumedItemQuality(){
++        return consumedItemQuality;
++    }
++
++    public float consumedItemYieldMultiplier(){
++        return consumedItemYieldMultiplier;
++    }
++
+     public void consume(){
++        resetItemQualityState();
+         for(Consume cons : block.consumers){
+             cons.trigger(self());
+         }
+diff --git a/core/src/mindustry/type/Item.java b/core/src/mindustry/type/Item.java
+index 3ba4dc9de5..22d1661cc9 100644
+--- a/core/src/mindustry/type/Item.java
++++ b/core/src/mindustry/type/Item.java
+@@ -16,6 +16,35 @@ import mindustry.world.meta.*;
+ import static mindustry.Vars.*;
+ 
+ public class Item extends UnlockableContent implements Senseable{
++    public enum Quality{
++        normal(1f, 1f, Color.valueOf("8f8f8f"), "普通"),
++        fine(1.2f, 1.15f, Color.valueOf("5ec4ff"), "精良"),
++        rare(1.5f, 1.35f, Color.valueOf("c68cff"), "稀有");
++
++        public static final Quality[] all = values();
++
++        public final float drillSpeedMultiplier;
++        public final float craftYieldMultiplier;
++        public final Color accentColor;
++        public final String displayName;
++
++        Quality(float drillSpeedMultiplier, float craftYieldMultiplier, Color accentColor, String displayName){
++            this.drillSpeedMultiplier = drillSpeedMultiplier;
++            this.craftYieldMultiplier = craftYieldMultiplier;
++            this.accentColor = accentColor;
++            this.displayName = displayName;
++        }
++
++        public @Nullable Quality next(){
++            int next = ordinal() + 1;
++            return next >= all.length ? null : all[next];
++        }
++
++        public static Quality max(Quality first, Quality second){
++            return first.ordinal() >= second.ordinal() ? first : second;
++        }
++    }
++
+     public Color color;
+ 
+     /** how explosive this item is. */
+@@ -48,18 +77,110 @@ public class Item extends UnlockableContent implements Senseable{
+     public boolean buildable = true;
+     public boolean hidden = false;
+ 
++    public Quality quality = Quality.normal;
++    protected Item qualityBase = this;
++    protected Item[] qualityItems;
++
+     public Item(String name, Color color){
+         super(name);
+         this.color = color;
+     }
+ 
++    protected Item(String name, Color color, Quality quality, Item qualityBase){
++        this(name, color);
++        this.quality = quality;
++        this.qualityBase = qualityBase;
++    }
++
+     public Item(String name){
+         this(name, new Color(Color.black));
+     }
+ 
++    public boolean isBaseItem(){
++        return quality == Quality.normal && qualityBase == this;
++    }
++
++    public Item baseItem(){
++        return qualityBase;
++    }
++
++    public boolean acceptsEquivalentQualities(){
++        return isBaseItem();
++    }
++
++    public float drillSpeedMultiplier(){
++        return quality.drillSpeedMultiplier;
++    }
++
++    public float craftYieldMultiplier(){
++        return quality.craftYieldMultiplier;
++    }
++
++    public Item[] qualityFamily(){
++        return qualityBase.qualityItems == null ? new Item[]{qualityBase} : qualityBase.qualityItems;
++    }
++
++    public Item withQuality(Quality quality){
++        if(quality == this.quality && !acceptsEquivalentQualities()) return this;
++        if(qualityBase.qualityItems == null) return qualityBase;
++        return qualityBase.qualityItems[quality.ordinal()];
++    }
++
++    public Item upgradedQualityItem(){
++        Quality next = quality.next();
++        return next == null ? this : withQuality(next);
++    }
++
++    public Item craftedWithQuality(Quality quality){
++        return acceptsEquivalentQualities() ? withQuality(quality) : this;
++    }
++
++    public void ensureQualityVariants(){
++        if(!isBaseItem() || qualityItems != null) return;
++
++        qualityItems = new Item[Quality.all.length];
++        qualityItems[Quality.normal.ordinal()] = this;
++
++        for(Quality quality : Quality.all){
++            if(quality == Quality.normal) continue;
++
++            Item variant = new Item(name + "-" + quality.name(), new Color(color).lerp(quality.accentColor, 0.22f), quality, this);
++            variant.localizedName = localizedName + " " + quality.displayName;
++            variant.description = description;
++            variant.details = details;
++            variant.credit = credit;
++            variant.explosiveness = explosiveness;
++            variant.flammability = flammability;
++            variant.radioactivity = radioactivity;
++            variant.charge = charge;
++            variant.hardness = hardness;
++            variant.cost = cost;
++            variant.healthScaling = healthScaling;
++            variant.lowPriority = lowPriority;
++            variant.frames = frames;
++            variant.transitionFrames = transitionFrames;
++            variant.frameTime = frameTime;
++            variant.buildable = buildable;
++            variant.hidden = hidden;
++            variant.alwaysUnlocked = alwaysUnlocked;
++            variant.inlineDescription = inlineDescription;
++            variant.hideDetails = hideDetails;
++            variant.hideDatabase = hideDatabase;
++            variant.generateIcons = generateIcons;
++            variant.selectionSize = selectionSize;
++            variant.allDatabaseTabs = allDatabaseTabs;
++            variant.databaseCategory = databaseCategory;
++            variant.databaseTag = databaseTag;
++            variant.shownPlanets.addAll(shownPlanets);
++            variant.databaseTabs.addAll(databaseTabs);
++            variant.fullOverride = variant.name;
++            variant.qualityItems = qualityItems;
++            qualityItems[quality.ordinal()] = variant;
++        }
++    }
++
+     @Override
+     public boolean isOnPlanet(Planet planet){
+-        //hidden items should not appear on any planet's resource selection screen
+         return super.isOnPlanet(planet) && !hidden;
+     }
+ 
+@@ -70,9 +191,14 @@ public class Item extends UnlockableContent implements Senseable{
+ 
+     @Override
+     public void loadIcon(){
++        if(!isBaseItem()){
++            fullIcon = Core.atlas.find(fullOverride == null ? name : fullOverride, qualityBase.fullIcon);
++            uiIcon = fullIcon;
++            return;
++        }
++
+         super.loadIcon();
+ 
+-        //animation code ""borrowed"" from Project Unity - original implementation by GlennFolker and sk7725
+         if(frames > 0){
+             TextureRegion[] regions = new TextureRegion[frames * (transitionFrames + 1)];
+ 
+@@ -122,9 +248,26 @@ public class Item extends UnlockableContent implements Senseable{
+ 
+     @Override
+     public void createIcons(MultiPacker packer){
++        if(!isBaseItem()){
++            String regionName = qualityBase.frames > 0 ? qualityBase.name + "1" : qualityBase.name;
++            Pixmap image = Core.atlas.getPixmap(regionName).crop();
++            int overlay = Tmp.c1.set(quality.accentColor).a(0.32f).rgba8888();
++
++            for(int x = 0; x < image.width; x++){
++                for(int y = 0; y < image.height; y++){
++                    if(image.getA(x, y) > 0){
++                        image.setRaw(x, y, Pixmap.blend(overlay, image.getRaw(x, y)));
++                    }
++                }
++            }
++
++            packer.add(PageType.main, name, image);
++            image.dispose();
++            return;
++        }
++
+         super.createIcons(packer);
+ 
+-        //create transitions
+         if(frames > 0 && transitionFrames > 0){
+             var pixmaps = new PixmapRegion[frames];
+ 
+diff --git a/core/src/mindustry/world/blocks/production/Drill.java b/core/src/mindustry/world/blocks/production/Drill.java
+index cc123b120a..05afda4332 100644
+--- a/core/src/mindustry/world/blocks/production/Drill.java
++++ b/core/src/mindustry/world/blocks/production/Drill.java
+@@ -168,7 +168,7 @@ public class Drill extends Block{
+     }
+ 
+     public float getDrillTime(Item item){
+-        return (drillTime + hardnessDrillMultiplier * item.hardness) / drillMultipliers.get(item, 1f);
++        return (drillTime + hardnessDrillMultiplier * item.hardness) / (drillMultipliers.get(item, 1f) * item.drillSpeedMultiplier());
+     }
+ 
+     @Override
+diff --git a/core/src/mindustry/world/blocks/production/GenericCrafter.java b/core/src/mindustry/world/blocks/production/GenericCrafter.java
+index 0fc1ef457b..f6a001d4f9 100644
+--- a/core/src/mindustry/world/blocks/production/GenericCrafter.java
++++ b/core/src/mindustry/world/blocks/production/GenericCrafter.java
+@@ -21,19 +21,13 @@ import mindustry.world.meta.*;
+ import static mindustry.Vars.*;
+ 
+ public class GenericCrafter extends Block{
+-    /** Written to outputItems as a single-element array if outputItems is null. */
+     public @Nullable ItemStack outputItem;
+-    /** Overwrites outputItem if not null. */
+     public @Nullable ItemStack[] outputItems;
+ 
+-    /** Written to outputLiquids as a single-element array if outputLiquids is null. */
+     public @Nullable LiquidStack outputLiquid;
+-    /** Overwrites outputLiquid if not null. */
+     public @Nullable LiquidStack[] outputLiquids;
+-    /** Liquid output directions, specified in the same order as outputLiquids. Use -1 to dump in every direction. Rotations are relative to block. */
+     public int[] liquidOutputDirections = {-1};
+ 
+-    /** if true, crafters with multiple liquid outputs will dump excess when there's still space for at least one liquid type */
+     public boolean dumpExtraLiquid = true;
+     public boolean ignoreLiquidFullness = false;
+ 
+@@ -43,7 +37,6 @@ public class GenericCrafter extends Block{
+     public float updateEffectChance = 0.04f;
+     public float updateEffectSpread = 4f;
+     public float warmupSpeed = 0.019f;
+-    /** Only used for legacy cultivator blocks. */
+     @NoPatch
+     public boolean legacyReadWarmup = false;
+ 
+@@ -82,12 +75,9 @@ public class GenericCrafter extends Block{
+     public void setBars(){
+         super.setBars();
+ 
+-        //set up liquid bars for liquid outputs
+         if(outputLiquids != null && outputLiquids.length > 0){
+-            //no need for dynamic liquid bar
+             removeBar("liquid");
+ 
+-            //then display output buffer
+             for(var stack : outputLiquids){
+                 addLiquidBar(stack.liquid);
+             }
+@@ -123,7 +113,6 @@ public class GenericCrafter extends Block{
+         if(outputLiquids == null && outputLiquid != null){
+             outputLiquids = new LiquidStack[]{outputLiquid};
+         }
+-        //write back to outputLiquid, as it helps with sensing
+         if(outputLiquid == null && outputLiquids != null && outputLiquids.length > 0){
+             outputLiquid = outputLiquids[0];
+         }
+@@ -188,6 +177,8 @@ public class GenericCrafter extends Block{
+         public float totalProgress;
+         public float warmup;
+ 
++        transient float[] outputRemainders;
++
+         @Override
+         public void draw(){
+             drawer.draw(this);
+@@ -202,8 +193,10 @@ public class GenericCrafter extends Block{
+         @Override
+         public boolean shouldConsume(){
+             if(outputItems != null){
++                int maxBoostedAmount = Mathf.ceil(Item.Quality.rare.craftYieldMultiplier);
+                 for(var output : outputItems){
+-                    if(items.get(output.item) + output.amount > itemCapacity){
++                    int boosted = Math.max(output.amount, Mathf.ceil(output.amount * Item.Quality.rare.craftYieldMultiplier));
++                    if(items.getEquivalent(output.item) + Math.max(boosted, maxBoostedAmount) > itemCapacity){
+                         return false;
+                     }
+                 }
+@@ -217,12 +210,10 @@ public class GenericCrafter extends Block{
+                             return false;
+                         }
+                     }else{
+-                        //if there's still space left, it's not full for all liquids
+                         allFull = false;
+                     }
+                 }
+ 
+-                //if there is no space left for any liquid, it can't reproduce
+                 if(allFull){
+                     return false;
+                 }
+@@ -238,7 +229,6 @@ public class GenericCrafter extends Block{
+                 progress += getProgressIncrease(craftTime);
+                 warmup = Mathf.approachDelta(warmup, warmupTarget(), warmupSpeed);
+ 
+-                //continuously output based on efficiency
+                 if(outputLiquids != null){
+                     float inc = getProgressIncrease(1f);
+                     for(var output : outputLiquids){
+@@ -253,7 +243,6 @@ public class GenericCrafter extends Block{
+                 warmup = Mathf.approachDelta(warmup, 0f, warmupSpeed);
+             }
+ 
+-            //TODO may look bad, revert to edelta() if so
+             totalProgress += warmup * Time.delta;
+ 
+             if(progress >= 1f){
+@@ -269,7 +258,6 @@ public class GenericCrafter extends Block{
+                 return super.getProgressIncrease(baseTime);
+             }
+ 
+-            //limit progress increase by maximum amount of liquid it can produce
+             float scaling = 1f, max = 1f;
+             if(outputLiquids != null){
+                 max = 0f;
+@@ -280,7 +268,6 @@ public class GenericCrafter extends Block{
+                 }
+             }
+ 
+-            //when dumping excess take the maximum value instead of the minimum.
+             return super.getProgressIncrease(baseTime) * (dumpExtraLiquid ? Math.min(max, 1f) : scaling);
+         }
+ 
+@@ -298,13 +285,33 @@ public class GenericCrafter extends Block{
+             return totalProgress;
+         }
+ 
++        void ensureOutputRemainders(){
++            if(outputItems != null && (outputRemainders == null || outputRemainders.length != outputItems.length)){
++                outputRemainders = new float[outputItems.length];
++            }
++        }
++
++        int boostedOutputAmount(int index, int baseAmount, float multiplier){
++            ensureOutputRemainders();
++            float totalAmount = baseAmount * multiplier + outputRemainders[index];
++            int produced = Mathf.floor(totalAmount);
++            outputRemainders[index] = totalAmount - produced;
++            return produced;
++        }
++
+         public void craft(){
+             consume();
+ 
+             if(outputItems != null){
+-                for(var output : outputItems){
+-                    for(int i = 0; i < output.amount; i++){
+-                        offload(output.item);
++                Item.Quality outputQuality = consumedItemQuality();
++                float outputMultiplier = consumedItemYieldMultiplier();
++
++                for(int i = 0; i < outputItems.length; i++){
++                    ItemStack output = outputItems[i];
++                    int produced = boostedOutputAmount(i, output.amount, outputMultiplier);
++                    Item craftedItem = output.item.craftedWithQuality(outputQuality);
++                    for(int j = 0; j < produced; j++){
++                        offload(craftedItem);
+                     }
+                 }
+             }
+@@ -318,7 +325,13 @@ public class GenericCrafter extends Block{
+         public void dumpOutputs(){
+             if(outputItems != null && timer(timerDump, dumpTime / timeScale)){
+                 for(ItemStack output : outputItems){
+-                    dump(output.item);
++                    if(output.item.acceptsEquivalentQualities()){
++                        for(Item variant : output.item.qualityFamily()){
++                            dump(variant);
++                        }
++                    }else{
++                        dump(output.item);
++                    }
+                 }
+             }
+ 
+@@ -334,7 +347,6 @@ public class GenericCrafter extends Block{
+         @Override
+         public double sense(LAccess sensor){
+             if(sensor == LAccess.progress) return progress();
+-            //attempt to prevent wild total liquid fluctuation, at least for crafters
+             if(sensor == LAccess.totalLiquids && outputLiquid != null) return liquids.get(outputLiquid.liquid);
+             return super.sense(sensor);
+         }
+diff --git a/core/src/mindustry/world/blocks/production/Separator.java b/core/src/mindustry/world/blocks/production/Separator.java
+index 22ad5c94ab..d2146db823 100644
+--- a/core/src/mindustry/world/blocks/production/Separator.java
++++ b/core/src/mindustry/world/blocks/production/Separator.java
+@@ -13,9 +13,6 @@ import mindustry.world.consumers.*;
+ import mindustry.world.draw.*;
+ import mindustry.world.meta.*;
+ 
+-/**
+- * Extracts a random list of items from an input item and an input liquid.
+- */
+ public class Separator extends Block{
+     protected @Nullable ConsumeItems consItems;
+ 
+@@ -77,6 +74,7 @@ public class Separator extends Block{
+         public float totalProgress;
+         public float warmup;
+         public int seed;
++        public float outputRemainder;
+ 
+         @Override
+         public void created(){
+@@ -91,13 +89,12 @@ public class Separator extends Block{
+         @Override
+         public boolean shouldConsume(){
+             int total = items.total();
+-            //very inefficient way of allowing separators to ignore input buffer storage
+             if(consItems != null){
+                 for(ItemStack stack : consItems.items){
+-                    total -= items.get(stack.item);
++                    total -= items.getEquivalent(stack.item);
+                 }
+             }
+-            return total < itemCapacity && enabled;
++            return total + Mathf.ceil(Item.Quality.rare.craftYieldMultiplier) <= itemCapacity && enabled;
+         }
+ 
+         @Override
+@@ -142,23 +139,29 @@ public class Separator extends Block{
+                 int sum = 0;
+                 for(ItemStack stack : results) sum += stack.amount;
+ 
+-                int i = Mathf.randomSeed(seed++, 0, sum - 1);
+-                int count = 0;
+-                Item item = null;
++                consume();
+ 
+-                //guaranteed desync since items are random - won't be fixed and probably isn't too important
+-                for(ItemStack stack : results){
+-                    if(i >= count && i < count + stack.amount){
+-                        item = stack.item;
+-                        break;
++                float outputTotal = consumedItemYieldMultiplier() + outputRemainder;
++                int produced = Mathf.floor(outputTotal);
++                outputRemainder = outputTotal - produced;
++                Item.Quality outputQuality = consumedItemQuality();
++
++                for(int producedIndex = 0; producedIndex < produced; producedIndex++){
++                    int i = Mathf.randomSeed(seed++, 0, sum - 1);
++                    int count = 0;
++                    Item item = null;
++
++                    for(ItemStack stack : results){
++                        if(i >= count && i < count + stack.amount){
++                            item = stack.item.craftedWithQuality(outputQuality);
++                            break;
++                        }
++                        count += stack.amount;
+                     }
+-                    count += stack.amount;
+-                }
+ 
+-                consume();
+-
+-                if(item != null && items.get(item) < itemCapacity){
+-                    offload(item);
++                    if(item != null && items.getEquivalent(item.baseItem()) < itemCapacity){
++                        offload(item);
++                    }
+                 }
+             }
+ 
+diff --git a/core/src/mindustry/world/consumers/ConsumeItems.java b/core/src/mindustry/world/consumers/ConsumeItems.java
+index c43fa42a32..b6e5e51d73 100644
+--- a/core/src/mindustry/world/consumers/ConsumeItems.java
++++ b/core/src/mindustry/world/consumers/ConsumeItems.java
+@@ -6,6 +6,7 @@ import mindustry.type.*;
+ import mindustry.ui.*;
+ import mindustry.world.*;
+ import mindustry.world.meta.*;
++import mindustry.world.modules.*;
+ 
+ public class ConsumeItems extends Consume{
+     public final ItemStack[] items;
+@@ -14,7 +15,6 @@ public class ConsumeItems extends Consume{
+         this.items = items;
+     }
+ 
+-    /** Mods.*/
+     protected ConsumeItems(){
+         this(ItemStack.empty);
+     }
+@@ -24,7 +24,13 @@ public class ConsumeItems extends Consume{
+         block.hasItems = true;
+         block.acceptsItems = true;
+         for(var stack : items){
+-            block.itemFilter[stack.item.id] = true;
++            if(stack.item.acceptsEquivalentQualities()){
++                for(Item item : stack.item.qualityFamily()){
++                    block.itemFilter[item.id] = true;
++                }
++            }else{
++                block.itemFilter[stack.item.id] = true;
++            }
+         }
+     }
+ 
+@@ -34,7 +40,7 @@ public class ConsumeItems extends Consume{
+             int i = 0;
+             for(var stack : items){
+                 c.add(new ReqImage(StatValues.stack(stack.item, Math.round(stack.amount * multiplier.get(build))),
+-                () -> build.items.has(stack.item, Math.round(stack.amount * multiplier.get(build))))).padRight(8);
++                () -> build.items.hasEquivalent(stack.item, Math.round(stack.amount * multiplier.get(build))))).padRight(8);
+                 if(++i % 4 == 0) c.row();
+             }
+         }).left();
+@@ -42,14 +48,30 @@ public class ConsumeItems extends Consume{
+ 
+     @Override
+     public void trigger(Building build){
++        float totalMultiplier = 0f;
++        int totalAmount = 0;
++        Item.Quality highestQuality = Item.Quality.normal;
++
+         for(var stack : items){
+-            build.items.remove(stack.item, Math.round(stack.amount * multiplier.get(build)));
++            ItemModule.QualityConsumption result = build.items.removeEquivalent(stack.item, Math.round(stack.amount * multiplier.get(build)));
++            totalMultiplier += result.totalCraftMultiplier;
++            totalAmount += result.amount;
++            highestQuality = Item.Quality.max(highestQuality, result.highestQuality);
+         }
++
++        build.setItemQualityState(highestQuality, totalAmount == 0 ? 1f : totalMultiplier / totalAmount);
+     }
+ 
+     @Override
+     public float efficiency(Building build){
+-        return build.consumeTriggerValid() || build.items.has(items, multiplier.get(build)) ? 1f : 0f;
++        if(build.consumeTriggerValid()) return 1f;
++
++        for(ItemStack stack : items){
++            if(!build.items.hasEquivalent(stack.item, Math.round(stack.amount * multiplier.get(build)))){
++                return 0f;
++            }
++        }
++        return 1f;
+     }
+ 
+     @Override
+diff --git a/core/src/mindustry/world/modules/ItemModule.java b/core/src/mindustry/world/modules/ItemModule.java
+index 5f01d335e3..5480b03897 100644
+--- a/core/src/mindustry/world/modules/ItemModule.java
++++ b/core/src/mindustry/world/modules/ItemModule.java
+@@ -13,6 +13,12 @@ import static mindustry.Vars.*;
+ public class ItemModule extends BlockModule{
+     public static final ItemModule empty = new ItemModule();
+ 
++    public static class QualityConsumption{
++        public int amount;
++        public float totalCraftMultiplier;
++        public Item.Quality highestQuality = Item.Quality.normal;
++    }
++
+     private static final int windowSize = 6;
+     private static WindowedMean[] cacheFlow;
+     private static float[] cacheSums;
+@@ -40,7 +46,6 @@ public class ItemModule extends BlockModule{
+     }
+ 
+     public void updateFlow(){
+-        //update the flow at N fps at most
+         if(flowTimer.get(1, pollScl)){
+ 
+             if(flow == null){
+@@ -127,6 +132,48 @@ public class ItemModule extends BlockModule{
+         return get(item) >= amount;
+     }
+ 
++    public int getEquivalent(Item item){
++        if(!item.acceptsEquivalentQualities()) return get(item);
++
++        int total = 0;
++        for(Item variant : item.qualityFamily()){
++            total += get(variant);
++        }
++        return total;
++    }
++
++    public boolean hasEquivalent(Item item, int amount){
++        return getEquivalent(item) >= amount;
++    }
++
++    public QualityConsumption removeEquivalent(Item item, int amount){
++        QualityConsumption result = new QualityConsumption();
++
++        if(!item.acceptsEquivalentQualities()){
++            int used = Math.min(amount, get(item));
++            remove(item, used);
++            result.amount = used;
++            result.totalCraftMultiplier = used * item.craftYieldMultiplier();
++            result.highestQuality = item.quality;
++            return result;
++        }
++
++        for(int i = Item.Quality.all.length - 1; i >= 0 && amount > 0; i--){
++            Item variant = item.withQuality(Item.Quality.all[i]);
++            int available = get(variant);
++            int used = Math.min(available, amount);
++            if(used <= 0) continue;
++
++            remove(variant, used);
++            amount -= used;
++            result.amount += used;
++            result.totalCraftMultiplier += used * variant.craftYieldMultiplier();
++            result.highestQuality = Item.Quality.max(result.highestQuality, variant.quality);
++        }
++
++        return result;
++    }
++
+     public boolean has(ItemStack[] stacks){
+         for(ItemStack stack : stacks){
+             if(!has(stack.item, stack.amount)) return false;
+@@ -157,9 +204,6 @@ public class ItemModule extends BlockModule{
+         return true;
+     }
+ 
+-    /**
+-     * Returns true if this entity has at least one of each item in each stack.
+-     */
+     public boolean hasOne(ItemStack[] stacks){
+         for(ItemStack stack : stacks){
+             if(!has(stack.item, 1)) return false;
+@@ -190,11 +234,11 @@ public class ItemModule extends BlockModule{
+ 
+     public @Nullable Item take(){
+         for(int i = 0; i < items.length; i++){
+-            int index = (i + takeRotation);
++            int index = i + takeRotation;
+             if(index >= items.length) index -= items.length;
+             if(items[index] > 0){
+-                items[index] --;
+-                total --;
++                items[index]--;
++                total--;
+                 takeRotation = index + 1;
+                 return content.item(index);
+             }
+@@ -211,7 +255,7 @@ public class ItemModule extends BlockModule{
+     }
+ 
+     public void set(Item item, int amount){
+-        total += (amount - items[item.id]);
++        total += amount - items[item.id];
+         items[item.id] = amount;
+     }
+ 
+@@ -294,15 +338,14 @@ public class ItemModule extends BlockModule{
+ 
+         for(int i = 0; i < items.length; i++){
+             if(items[i] > 0){
+-                write.s(i); //item ID
+-                write.i(items[i]); //item amount
++                write.s(i);
++                write.i(items[i]);
+             }
+         }
+     }
+ 
+     @Override
+     public void read(Reads read, boolean legacy){
+-        //just in case, reset items
+         Arrays.fill(items, 0);
+         int count = legacy ? read.ub() : read.s();
+         total = 0;
+@@ -317,30 +360,4 @@ public class ItemModule extends BlockModule{
+             }
+         }
+     }
+-
+-    public interface ItemConsumer{
+-        void accept(Item item, int amount);
+-    }
+-
+-    public interface ItemCalculator{
+-        float get(Item item, int amount);
+-    }
+-
+-    @Override
+-    public String toString(){
+-        var res = new StringBuilder();
+-        res.append("ItemModule{");
+-        boolean any = false;
+-        for(int i = 0; i < items.length; i++){
+-            if(items[i] != 0){
+-                res.append(content.items().get(i).name).append(":").append(items[i]).append(",");
+-                any = true;
+-            }
+-        }
+-        if(any){
+-            res.setLength(res.length() - 1);
+-        }
+-        res.append("}");
+-        return res.toString();
+-    }
+ }
