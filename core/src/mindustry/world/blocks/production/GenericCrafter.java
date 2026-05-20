@@ -20,7 +20,7 @@ import mindustry.world.meta.*;
 
 import static mindustry.Vars.*;
 
-public class GenericCrafter extends Block{
+public class GenericCrafter extends ProductionBlock{
     /** Written to outputItems as a single-element array if outputItems is null. */
     public @Nullable ItemStack outputItem;
     /** Overwrites outputItem if not null. */
@@ -183,7 +183,7 @@ public class GenericCrafter extends Block{
         }
     }
 
-    public class GenericCrafterBuild extends Building{
+    public class GenericCrafterBuild extends ProductionBuild{
         public float progress;
         public float totalProgress;
         public float warmup;
@@ -200,11 +200,11 @@ public class GenericCrafter extends Block{
         }
 
         @Override
-        public boolean shouldConsume(){
+        public boolean isOutputFull(){
             if(outputItems != null){
                 for(var output : outputItems){
                     if(items.get(output.item) + output.amount > itemCapacity){
-                        return false;
+                        return true;
                     }
                 }
             }
@@ -214,21 +214,19 @@ public class GenericCrafter extends Block{
                 for(var output : outputLiquids){
                     if(liquids.get(output.liquid) >= liquidCapacity - 0.001f){
                         if(!dumpExtraLiquid){
-                            return false;
+                            return true;
                         }
                     }else{
-                        //if there's still space left, it's not full for all liquids
                         allFull = false;
                     }
                 }
 
-                //if there is no space left for any liquid, it can't reproduce
                 if(allFull){
-                    return false;
+                    return true;
                 }
             }
 
-            return enabled;
+            return false;
         }
 
         @Override

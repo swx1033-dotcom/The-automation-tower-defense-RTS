@@ -24,7 +24,7 @@ import mindustry.world.meta.*;
 
 import static mindustry.Vars.*;
 
-public class Drill extends Block{
+public class Drill extends ProductionBlock{
     public float hardnessDrillMultiplier = 50f;
 
     protected final ObjectIntMap<Item> oreCount = new ObjectIntMap<>();
@@ -234,7 +234,7 @@ public class Drill extends Block{
         return drops != null && drops.hardness <= tier && (blockedItems == null || !blockedItems.contains(drops));
     }
 
-    public class DrillBuild extends Building{
+    public class DrillBuild extends ProductionBuild{
         public float progress;
         public float warmup;
         public float timeDrilled;
@@ -244,8 +244,8 @@ public class Drill extends Block{
         public Item dominantItem;
 
         @Override
-        public boolean shouldConsume(){
-            return items.total() < itemCapacity && enabled && dominantItem != null;
+        public boolean isOutputFull(){
+            return items.total() >= itemCapacity || dominantItem == null;
         }
 
         @Override
@@ -374,11 +374,6 @@ public class Drill extends Block{
                 Draw.rect(itemRegion, x, y);
                 Draw.color();
             }
-        }
-
-        @Override
-        public byte version(){
-            return 1;
         }
 
         @Override

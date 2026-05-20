@@ -4,8 +4,12 @@ import arc.*;
 import arc.graphics.*;
 import arc.graphics.g2d.*;
 import arc.math.*;
+import arc.scene.ui.layout.*;
 import arc.util.*;
+import arc.util.io.*;
 import mindustry.game.*;
+import mindustry.gen.*;
+import mindustry.graphics.*;
 import mindustry.logic.*;
 import mindustry.type.*;
 import mindustry.world.*;
@@ -112,6 +116,7 @@ public class Pump extends LiquidBlock{
         public float consTimer;
         public float amount = 0f;
         public @Nullable Liquid liquidDrop = null;
+        public boolean autoMode = true;
 
         @Override
         public void draw(){
@@ -151,8 +156,20 @@ public class Pump extends LiquidBlock{
             }
         }
 
+        public boolean isOutputFull(){
+            return liquidDrop != null && liquids.get(liquidDrop) >= liquidCapacity - 0.01f;
+        }
+
+        @Override
+        public BlockStatus status(){
+            if(!enabled) return BlockStatus.logicDisable;
+            if(autoMode && isOutputFull()) return BlockStatus.noOutput;
+            return liquidDrop == null ? BlockStatus.noInput : BlockStatus.active;
+        }
+
         @Override
         public boolean shouldConsume(){
+            if(!autoMode) return enabled;
             return liquidDrop != null && liquids.get(liquidDrop) < liquidCapacity - 0.01f && enabled;
         }
 
@@ -162,7 +179,6 @@ public class Pump extends LiquidBlock{
                 float maxPump = Math.min(liquidCapacity - liquids.get(liquidDrop), amount * pumpAmount * edelta());
                 liquids.add(liquidDrop, maxPump);
 
-                //does nothing for most pumps, as those do not require items.
                 if((consTimer += delta()) >= consumeTime){
                     consume();
                     consTimer %= 1f;
@@ -193,6 +209,45 @@ public class Pump extends LiquidBlock{
         @Override
         public float totalProgress(){
             return totalProgress;
+        }
+
+        @Override
+        public void buildConfiguration(Table table){
+            table.button(autoMode ? Icon.pause : Icon.play, Styles.clearNoneTogglei, () -> {
+                autoMode = !autoMode;
+                configureAny(autoMode);
+            }).size(50f).update(b -> b.setChecked(autoMode));
+        }
+
+        @Override
+        public Object config(){
+            return autoMode;
+        }
+
+        @Override
+        public void configured(Unit builder, Object value){
+            if(value instanceof Boolean b){
+                autoMode = b;
+            }
+        }
+
+        @Override
+        public byte version(){
+            return 1;
+        }
+
+        @Override
+        public void write(Writes write){
+            super.write(write);
+            write.bool(autoMode);
+        }
+
+        @Override
+        public void read(Reads read, byte revision){
+            super.read(read, revision);
+            if(revision >= 1){
+                autoMode = read.bool();
+            }
         }
     }
 }

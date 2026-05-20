@@ -115,6 +115,7 @@ public class SolidPump extends Pump{
 
         @Override
         public boolean shouldConsume(){
+            if(!autoMode) return enabled;
             return liquids.get(result) < liquidCapacity - 0.01f;
         }
 
