@@ -31,6 +31,7 @@ public class Separator extends Block{
         hasItems = true;
         hasLiquids = true;
         sync = true;
+        configurable = true;
     }
 
     @Override

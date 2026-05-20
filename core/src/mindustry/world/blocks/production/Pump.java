@@ -28,6 +28,7 @@ public class Pump extends LiquidBlock{
         group = BlockGroup.liquids;
         floating = true;
         envEnabled = Env.terrestrial;
+        configurable = true;
     }
 
     @Override
@@ -153,7 +154,7 @@ public class Pump extends LiquidBlock{
 
         @Override
         public boolean shouldConsume(){
-            return liquidDrop != null && liquids.get(liquidDrop) < liquidCapacity - 0.01f && enabled;
+            return liquidDrop != null && liquids.get(liquidDrop) < liquidCapacity - 0.01f && enabled && !(autoToggle && autoPaused);
         }
 
         @Override

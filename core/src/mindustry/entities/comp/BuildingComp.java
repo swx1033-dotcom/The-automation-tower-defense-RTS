@@ -77,6 +77,14 @@ abstract class BuildingComp implements Posc, Teamc, Healthc, Buildingc, Timerc, 
     transient boolean enabled = true;
     transient @Nullable Building lastDisabler;
 
+    // 自动启停功能字段
+    /** 是否启用自动启停 */
+    public boolean autoToggle = false;
+    /** 自动启停时的暂停状态 */
+    public boolean autoPaused = false;
+    /** 暂停原因：0=未暂停，1=产物满，2=原料缺 */
+    public byte pauseReason = 0;
+
     @Nullable PowerModule power;
     @Nullable ItemModule items;
     @Nullable LiquidModule liquids;
@@ -183,7 +191,7 @@ abstract class BuildingComp implements Posc, Teamc, Healthc, Buildingc, Timerc, 
         write.f(health);
         write.b(rotation | 0b10000000);
         write.b(team.id);
-        write.b(writeVisibility ? 4 : 3); //version
+        write.b(5); //version - increased to 5 for autoToggle
         write.b(enabled ? 1 : 0);
         //write presence of items/power/liquids/cons, so removing/adding them does not corrupt future saves.
         write.b(moduleBitmask());
@@ -208,6 +216,12 @@ abstract class BuildingComp implements Posc, Teamc, Healthc, Buildingc, Timerc, 
         //only write visibility when necessary, saving 8 bytes - implies new version
         if(writeVisibility){
             write.l(visibleFlags);
+        }
+        
+        //write autoToggle if enabled
+        if(autoToggle){
+            write.bool(autoPaused);
+            write.b(pauseReason);
         }
     }
 
@@ -263,6 +277,13 @@ abstract class BuildingComp implements Posc, Teamc, Healthc, Buildingc, Timerc, 
         if(version == 4){
             visibleFlags = read.l();
         }
+        
+        //version 5 has autoToggle fields
+        if(version >= 5 && (moduleBits & (1 << 6)) != 0){
+            autoToggle = true;
+            autoPaused = read.bool();
+            pauseReason = read.b();
+        }
     }
 
     public int moduleBitmask(){
@@ -272,7 +293,8 @@ abstract class BuildingComp implements Posc, Teamc, Healthc, Buildingc, Timerc, 
         (liquids != null ? 1 << 2 : 0) |
         1 << 3 | //old consume module
         (timeScale != 1f ? 1 << 4 : 0) |
-        (lastDisabler != null && lastDisabler.isValid() ? 1 << 5 : 0);
+        (lastDisabler != null && lastDisabler.isValid() ? 1 << 5 : 0) |
+        (autoToggle ? 1 << 6 : 0);
     }
 
     public void writeAll(Writes write){
@@ -629,6 +651,14 @@ abstract class BuildingComp implements Posc, Teamc, Healthc, Buildingc, Timerc, 
             return BlockStatus.logicDisable;
         }
 
+        if(autoToggle && autoPaused){
+            if(pauseReason == 1){
+                return BlockStatus.noOutput; // 产物满
+            }else if(pauseReason == 2){
+                return BlockStatus.noInput; // 原料缺
+            }
+        }
+
         if(!shouldConsume()){
             return BlockStatus.noOutput;
         }
@@ -747,8 +777,126 @@ abstract class BuildingComp implements Posc, Teamc, Healthc, Buildingc, Timerc, 
     public void created(){}
 
     /** @return whether this block is currently "active" and should be consuming requirements. */
+    /**
+     * 检查产物缓冲区是否已满
+     * @return 如果任何产物缓冲区已满，返回true
+     */
+    public boolean isOutputFull(){
+        // 检查GenericCrafter的输出
+        if(block instanceof mindustry.world.blocks.production.GenericCrafter crafter){
+            if(crafter.outputItems != null){
+                for(var output : crafter.outputItems){
+                    if(items != null && items.get(output.item) + output.amount > block.itemCapacity){
+                        return true;
+                    }
+                }
+            }
+            if(crafter.outputLiquids != null && !crafter.ignoreLiquidFullness){
+                for(var output : crafter.outputLiquids){
+                    if(liquids != null && liquids.get(output.liquid) >= block.liquidCapacity - 0.001f){
+                        if(!crafter.dumpExtraLiquid){
+                            return true;
+                        }
+                    }
+                }
+                // 如果启用了dumpExtraLiquid，需要检查所有液体是否都满
+                if(crafter.dumpExtraLiquid && crafter.outputLiquids != null){
+                    boolean allFull = true;
+                    for(var output : crafter.outputLiquids){
+                        if(liquids != null && liquids.get(output.liquid) < block.liquidCapacity - 0.001f){
+                            allFull = false;
+                            break;
+                        }
+                    }
+                    if(allFull) return true;
+                }
+            }
+        }
+        
+        // 检查Separator的输出
+        if(block instanceof mindustry.world.blocks.production.Separator separator){
+            if(separator.results != null && items != null){
+                int total = items.total();
+                for(var cons : block.consumers){
+                    if(cons instanceof mindustry.world.consumers.ConsumeItems){
+                        // 减去输入物品的数量
+                        for(var item : ((mindustry.world.consumers.ConsumeItems)cons).items){
+                            total -= items.get(item.item);
+                        }
+                    }
+                }
+                if(total >= block.itemCapacity) return true;
+            }
+        }
+        
+        // 检查Drill的输出
+        if(block instanceof mindustry.world.blocks.production.Drill){
+            if(items != null && items.total() >= block.itemCapacity) return true;
+        }
+        
+        // 检查Pump的输出
+        if(block instanceof mindustry.world.blocks.production.Pump pump){
+            if(liquids != null){
+                for(var liquid : content.liquids()){
+                    if(liquids.get(liquid) >= block.liquidCapacity - 0.01f) return true;
+                }
+            }
+        }
+        
+        // 通用检查：对于任何有物品或液体输出的建筑
+        if(block.hasItems && items != null){
+            // 如果物品已满，可能是产物
+            if(items.total() >= block.itemCapacity) return true;
+        }
+        
+        if(block.hasLiquids && liquids != null && block.outputsLiquid){
+            if(liquids.currentAmount() >= block.liquidCapacity - 0.001f) return true;
+        }
+        
+        return false;
+    }
+    
+    /**
+     * 检查是否有原料短缺
+     * @return 如果任何必需的原料不足，返回true
+     */
+    public boolean isInputMissing(){
+        // 检查是否有任何消费者效率为0（除了可能的电力消费者）
+        for(var cons : block.nonOptionalConsumers){
+            if(!(cons instanceof mindustry.world.consumers.ConsumePower) && cons.efficiency(this) <= 0.0000001f){
+                return true;
+            }
+        }
+        return false;
+    }
+    
+    /**
+     * 更新自动启停状态
+     */
+    public void updateAutoToggle(){
+        if(!autoToggle){
+            autoPaused = false;
+            pauseReason = 0;
+            return;
+        }
+        
+        boolean outputFull = isOutputFull();
+        boolean inputMissing = isInputMissing();
+        
+        if(outputFull){
+            autoPaused = true;
+            pauseReason = 1;
+        }else if(inputMissing || !autoPaused){
+            // 如果之前因为输出满而暂停，现在输出不满了就恢复
+            // 或者如果没有暂停，就保持运行状态
+            autoPaused = false;
+            pauseReason = 0;
+        }
+        // 注意：我们不因为原料短缺而暂停，而是让正常的消费系统处理
+    }
+    
     public boolean shouldConsume(){
-        return enabled;
+        return enabled && !(autoToggle && autoPaused);
     }
 
     public boolean productionValid(){
@@ -1399,6 +1547,16 @@ abstract class BuildingComp implements Posc, Teamc, Healthc, Buildingc, Timerc, 
             updateLastAccess(builder.getPlayer());
         }
 
+        // 处理autoToggle配置
+        if(value instanceof Boolean){
+            autoToggle = (Boolean)value;
+            if(!autoToggle){
+                autoPaused = false;
+                pauseReason = 0;
+            }
+            return;
+        }
+
         if(block.configurations.containsKey(type)){
             block.configurations.get(type).get(this, value);
         }else if(value instanceof Building build){
@@ -1646,6 +1804,22 @@ abstract class BuildingComp implements Posc, Teamc, Healthc, Buildingc, Timerc, 
      /** Called when this block is tapped to build a UI on the table.
       * configurable must be true for this to be called.*/
     public void buildConfiguration(Table table){
+        // 为生产类建筑添加自动启停开关
+        if(block instanceof mindustry.world.blocks.production.GenericCrafter || 
+           block instanceof mindustry.world.blocks.production.Separator ||
+           block instanceof mindustry.world.blocks.production.Incinerator ||
+           block instanceof mindustry.world.blocks.production.Drill ||
+           block instanceof mindustry.world.blocks.production.Pump){
+            
+            table.check("Auto", autoToggle, val -> {
+                autoToggle = val;
+                if(!val){
+                    autoPaused = false;
+                    pauseReason = 0;
+                }
+                configure(autoToggle);
+            }).left().row();
+        }
     }
 
     /** Update table alignment after configuring.*/
@@ -1909,6 +2083,9 @@ abstract class BuildingComp implements Posc, Teamc, Healthc, Buildingc, Timerc, 
     }
 
     public void updateConsumption(){
+        // 更新自动启停状态
+        updateAutoToggle();
+        
         //everything is valid when cheating
         if(!block.hasConsumers || cheating()){
             potentialEfficiency = enabled && productionValid() ? 1f : 0f;
@@ -1931,13 +2108,14 @@ abstract class BuildingComp implements Posc, Teamc, Healthc, Buildingc, Timerc, 
 
         //assume efficiency is 1 for the calculations below
         efficiency = optionalEfficiency = 1f;
+        // 保持电力连接，即使自动暂停
         shouldConsumePower = true;
 
         //first pass: get the minimum efficiency of any consumer
         for(var cons : block.nonOptionalConsumers){
             float result = cons.efficiency(self());
 
-            if(cons != block.consPower && result <= 0.0000001f){
+            if(cons != block.consPower && result <= 0.0000001f && !(autoToggle && autoPaused)){
                 shouldConsumePower = false;
             }
 
@@ -1990,6 +2168,14 @@ abstract class BuildingComp implements Posc, Teamc, Healthc, Buildingc, Timerc, 
     /** Tile configuration. Defaults to null. Used for block rebuilding. */
     @Nullable
     public Object config(){
+        // 如果是生产类建筑且启用了autoToggle，返回autoToggle的值
+        if((block instanceof mindustry.world.blocks.production.GenericCrafter || 
+            block instanceof mindustry.world.blocks.production.Separator ||
+            block instanceof mindustry.world.blocks.production.Incinerator ||
+            block instanceof mindustry.world.blocks.production.Drill ||
+            block instanceof mindustry.world.blocks.production.Pump) && autoToggle){
+            return autoToggle;
+        }
         return null;
     }
 

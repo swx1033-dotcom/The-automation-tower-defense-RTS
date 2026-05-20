@@ -21,6 +21,7 @@ public class Incinerator extends Block{
         hasLiquids = true;
         update = true;
         solid = true;
+        configurable = true;
     }
 
     public class IncineratorBuild extends Building{

@@ -59,6 +59,7 @@ public class GenericCrafter extends Block{
         ambientSoundVolume = 0.03f;
         flags = EnumSet.of(BlockFlag.factory);
         drawArrow = false;
+        configurable = true;
     }
 
     @Override
