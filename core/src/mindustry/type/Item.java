@@ -18,6 +18,35 @@ import static mindustry.Vars.*;
 public class Item extends UnlockableContent implements Senseable{
     public Color color;
 
+    public enum Quality{
+        normal(1.0f, 1.0f, 0),
+        refined(1.2f, 1.15f, 1),
+        rare(1.5f, 1.3f, 2);
+
+        public final float drillMultiplier;
+        public final float craftMultiplier;
+        public final int level;
+
+        Quality(float drillMultiplier, float craftMultiplier, int level){
+            this.drillMultiplier = drillMultiplier;
+            this.craftMultiplier = craftMultiplier;
+            this.level = level;
+        }
+
+        public Quality next(){
+            if(this == normal) return refined;
+            if(this == refined) return rare;
+            return this;
+        }
+
+        public static Quality of(int level){
+            if(level < 0 || level >= values().length) return normal;
+            return values()[level];
+        }
+    }
+
+    public Quality quality = Quality.normal;
+
     /** how explosive this item is. */
     public float explosiveness = 0f;
     /** flammability above 0.3 makes this eligible for item burners. */

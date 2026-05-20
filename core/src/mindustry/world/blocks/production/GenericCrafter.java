@@ -302,8 +302,10 @@ public class GenericCrafter extends Block{
             consume();
 
             if(outputItems != null){
+                float qualityMultiplier = getQualityMultiplier();
                 for(var output : outputItems){
-                    for(int i = 0; i < output.amount; i++){
+                    int amount = Math.max(1, Mathf.round(output.amount * qualityMultiplier));
+                    for(int i = 0; i < amount; i++){
                         offload(output.item);
                     }
                 }
@@ -313,6 +315,21 @@ public class GenericCrafter extends Block{
                 craftEffect.at(x, y);
             }
             progress %= 1f;
+        }
+
+        protected float getQualityMultiplier(){
+            float maxMultiplier = 1.0f;
+            if(items != null){
+                for(int i = 0; i < items.items.length; i++){
+                    if(items.items[i] > 0){
+                        Item item = content.item(i);
+                        if(item != null && item.quality != null){
+                            maxMultiplier = Math.max(maxMultiplier, item.quality.craftMultiplier);
+                        }
+                    }
+                }
+            }
+            return maxMultiplier;
         }
 
         public void dumpOutputs(){
